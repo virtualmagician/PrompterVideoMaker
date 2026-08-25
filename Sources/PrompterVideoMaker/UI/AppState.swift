@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 import Combine
 import SwiftUI
 import AppKit
@@ -379,6 +380,8 @@ final class AppState: ObservableObject {
     }
 
     func importURL(_ url: URL) {
+        Logger(subsystem: "com.marcotempest.PrompterVideoMaker", category: "open")
+            .notice("importURL: \(url.path, privacy: .public)")
         // A file import replacing the script mid-take would make the later
         // alignment map the spoken words onto unrelated text.
         guard !recordPaneVisible else {
@@ -425,13 +428,31 @@ final class AppState: ObservableObject {
         do {
             let proj = try PrompterProject.load(from: url)
             project = proj
-            projectFileURL = url
+            rememberProjectURL(url)
             selectedSegmentID = proj.script.segments.first?.id
             playheadVideoTime = 0
             isPlaying = false
         } catch {
             errorMessage = "Could not open project: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Last-project persistence
+
+    private static let lastProjectKey = "PVMLastProject"
+
+    private func rememberProjectURL(_ url: URL) {
+        projectFileURL = url
+        UserDefaults.standard.set(url.path, forKey: Self.lastProjectKey)
+    }
+
+    /// Called shortly after launch: if no document was opened (via Finder or
+    /// otherwise) and nothing is loaded yet, reopen the last saved project.
+    func restoreLastProjectIfIdle() {
+        guard project.script.isEmpty, pendingSRTImport == nil, transcribePhase == .idle else { return }
+        guard let path = UserDefaults.standard.string(forKey: Self.lastProjectKey),
+              FileManager.default.fileExists(atPath: path) else { return }
+        openProject(url: URL(fileURLWithPath: path))
     }
 
     func startTranscription(audioURL: URL) {
@@ -665,7 +686,10 @@ final class AppState: ObservableObject {
 
     func saveProject() {
         if let url = projectFileURL {
-            do { try project.save(to: url) } catch {
+            do {
+                try project.save(to: url)
+                rememberProjectURL(url)
+            } catch {
                 errorMessage = "Could not save project: \(error.localizedDescription)"
             }
         } else {
@@ -681,7 +705,7 @@ final class AppState: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 try project.save(to: url)
-                projectFileURL = url
+                rememberProjectURL(url)
             } catch {
                 errorMessage = "Could not save project: \(error.localizedDescription)"
             }
