@@ -208,7 +208,11 @@ final class AppState: ObservableObject {
     }
 
     private func syncAudioIfNeeded() {
-        guard isPlaying, project.style.includeAudio, let player = audioPlayer else { return }
+        guard let player = audioPlayer else { return }
+        guard isPlaying, project.style.includeAudio else {
+            if player.isPlaying { player.pause() }
+            return
+        }
         let target = playheadVideoTime - project.style.leadIn
         guard target >= 0 else {
             if player.isPlaying { player.pause() }
@@ -313,6 +317,7 @@ final class AppState: ObservableObject {
             script.normalize()
             project.script = script
             selectedSegmentID = script.segments.first?.id
+            pause()
             playheadVideoTime = 0
         } catch {
             errorMessage = "Could not parse \"\(pending.url.lastPathComponent)\": \(error.localizedDescription)"
@@ -351,6 +356,7 @@ final class AppState: ObservableObject {
                 project.script = script
                 project.audioPath = audioURL.path
                 selectedSegmentID = script.segments.first?.id
+                pause()
                 playheadVideoTime = 0
                 transcribePhase = .idle
             } catch is CancellationError {

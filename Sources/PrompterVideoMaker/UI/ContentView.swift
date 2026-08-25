@@ -74,7 +74,7 @@ struct ContentView: View {
         Binding(get: { appState.transcribePhase != .idle }, set: { if !$0 { appState.cancelTranscription() } })
     }
     private var exportingBinding: Binding<Bool> {
-        Binding(get: { appState.exportPhase != .idle }, set: { if !$0 { appState.exportPhase = .idle } })
+        Binding(get: { appState.exportPhase != .idle }, set: { if !$0 { appState.cancelExport() } })
     }
 }
 

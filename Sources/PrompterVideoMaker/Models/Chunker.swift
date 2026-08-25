@@ -24,7 +24,9 @@ enum Chunker {
         result.reserveCapacity(segments.count)
 
         for segment in segments {
-            let words = segment.text.split(separator: " ").map(String.init)
+            let words = segment.text.isEmpty
+                ? []
+                : segment.text.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
             let wordGroups = splitIntoWordGroups(words, maxWords: limit)
 
             var segmentChunks: [TextChunk] = []
@@ -54,7 +56,8 @@ enum Chunker {
         let n = words.count
 
         while start < n {
-            let windowEnd = min(start + maxWords, n) // exclusive
+            // Overflow-safe form of min(start + maxWords, n).
+            let windowEnd = maxWords >= n - start ? n : start + maxWords // exclusive
 
             var breakAt: Int? = nil
             for i in stride(from: windowEnd - 1, through: start, by: -1) {

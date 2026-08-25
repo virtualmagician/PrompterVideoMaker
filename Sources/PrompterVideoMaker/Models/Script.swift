@@ -92,7 +92,10 @@ struct PrompterProject: Codable, Equatable {
 
     static func load(from url: URL) throws -> PrompterProject {
         let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode(PrompterProject.self, from: data)
+        var proj = try JSONDecoder().decode(PrompterProject.self, from: data)
+        // Decodable bypasses Segment's initializer; restore timing invariants.
+        proj.script.normalize()
+        return proj
     }
 
     func save(to url: URL) throws {
