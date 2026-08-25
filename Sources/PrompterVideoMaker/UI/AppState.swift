@@ -448,9 +448,10 @@ final class AppState: ObservableObject {
     func suggestEmphasis(model: String) {
         guard !project.script.isEmpty, emphasisPhase == .idle else { return }
         emphasisPhase = .running(0)
+        let snapshot = project.script.segments
         emphasisTask = Task {
             do {
-                let suggested = try await EmphasisSuggester.suggest(segments: project.script.segments, model: model) { [weak self] p in
+                let suggested = try await EmphasisSuggester.suggest(segments: snapshot, model: model) { [weak self] p in
                     Task { @MainActor in
                         if case .running = self?.emphasisPhase {
                             self?.emphasisPhase = .running(p)
@@ -458,12 +459,28 @@ final class AppState: ObservableObject {
                     }
                 }
                 try Task.checkCancellation()
-                project.script.segments = suggested
+                // The request can take a while; merge per segment id and only
+                // where the text is unchanged since the snapshot, so edits,
+                // clears, or a re-recorded script made meanwhile are never
+                // clobbered by the stale result.
+                var suggestion: [UUID: (original: String, suggested: String)] = [:]
+                for (o, s) in zip(snapshot, suggested) {
+                    suggestion[o.id] = (o.text, s.text)
+                }
+                for i in project.script.segments.indices {
+                    let seg = project.script.segments[i]
+                    if let (original, new) = suggestion[seg.id], seg.text == original {
+                        project.script.segments[i].text = new
+                    }
+                }
                 emphasisPhase = .idle
             } catch is CancellationError {
-                emphasisPhase = .idle
+                // cancelEmphasis already reset the phase.
             } catch {
-                emphasisPhase = .failed(error.localizedDescription)
+                // A cancelled/stale task must never overwrite a newer state.
+                if !Task.isCancelled {
+                    emphasisPhase = .failed(error.localizedDescription)
+                }
             }
         }
     }
@@ -475,6 +492,9 @@ final class AppState: ObservableObject {
     }
 
     func clearEmphasis() {
+        // An explicit clear also aborts any in-flight suggestion, which would
+        // otherwise re-apply markup when it completes.
+        cancelEmphasis()
         project.script.segments = EmphasisSuggester.clear(segments: project.script.segments)
     }
 

@@ -33,6 +33,7 @@ struct OllamaClient {
         do {
             (data, _) = try await session.data(for: req)
         } catch {
+            if Self.isCancellation(error) { throw CancellationError() }
             throw OllamaError.notRunning
         }
         struct Tags: Decodable {
@@ -68,6 +69,7 @@ struct OllamaClient {
         do {
             (data, _) = try await session.data(for: req)
         } catch {
+            if Self.isCancellation(error) { throw CancellationError() }
             throw OllamaError.notRunning
         }
         do {
@@ -75,6 +77,12 @@ struct OllamaClient {
         } catch {
             throw OllamaError.badResponse(String(data: data.prefix(300), encoding: .utf8) ?? "non-UTF8")
         }
+    }
+
+    /// URLSession reports Swift Task cancellation as URLError(.cancelled);
+    /// preserve its identity so callers' CancellationError handling works.
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 }
 
