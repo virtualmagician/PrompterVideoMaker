@@ -35,7 +35,7 @@ private extension UTType {
 /// this object.
 @MainActor
 final class AppState: ObservableObject {
-    @Published var project: PrompterProject = PrompterProject()
+    @Published var project: PrompterProject = PrompterProject(style: AppState.loadDefaultStyle())
     @Published var selectedSegmentID: UUID?
     @Published var playheadVideoTime: Double = 0
     @Published var isPlaying: Bool = false
@@ -226,7 +226,44 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: - Style defaults
+
+    private static let defaultStyleKey = "PVMDefaultStyle"
+
+    /// The user's saved default style, or the factory style if none saved
+    /// (or if a saved one no longer decodes after an app update).
+    static func loadDefaultStyle() -> StyleSettings {
+        guard let data = UserDefaults.standard.data(forKey: defaultStyleKey),
+              let style = try? JSONDecoder().decode(StyleSettings.self, from: data) else {
+            return StyleSettings()
+        }
+        return style
+    }
+
+    /// Persists the current style; new documents and future launches start
+    /// from it.
+    func saveCurrentStyleAsDefault() {
+        if let data = try? JSONEncoder().encode(project.style) {
+            UserDefaults.standard.set(data, forKey: Self.defaultStyleKey)
+        }
+    }
+
+    func resetStyleToFactory() {
+        UserDefaults.standard.removeObject(forKey: Self.defaultStyleKey)
+        project.style = StyleSettings()
+    }
+
     // MARK: - Segment editing
+
+    /// Inserts a blank spacer segment (renders as one empty line) after the
+    /// given segment. Zero-length in time so scroll timing is unaffected.
+    func insertEmptyLine(after id: UUID) {
+        guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
+        let prev = project.script.segments[i]
+        let blank = Segment(text: "", start: prev.end, end: prev.end)
+        project.script.segments.insert(blank, at: i + 1)
+        project.script.normalize()
+    }
 
     func splitInHalf(_ id: UUID) {
         guard let seg = project.script.segments.first(where: { $0.id == id }) else { return }

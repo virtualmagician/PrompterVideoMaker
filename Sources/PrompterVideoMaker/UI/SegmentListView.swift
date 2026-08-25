@@ -131,6 +131,11 @@ private struct SegmentRow: View {
             } label: {
                 Label("Merge with Next", systemImage: "arrow.triangle.merge")
             }
+            Button {
+                appState.insertEmptyLine(after: segment.id)
+            } label: {
+                Label("Insert Empty Line Below", systemImage: "text.insert")
+            }
             Divider()
             Button(role: .destructive) {
                 appState.deleteSegment(segment.id)

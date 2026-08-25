@@ -7,8 +7,8 @@ import AppKit
 /// 1920-wide space, wrapped at `style.textWidth`, fixed line height
 /// `style.lineHeight`. Per-chunk color runs come from `Chunker`
 /// (`style.alternatingColors`, `style.maxChunkWords`, primary/secondary
-/// text colors). Segments are separated by exactly one empty-line gap
-/// (0.35 * lineHeight).
+/// text colors). All lines are spaced uniformly (no extra gap between
+/// segments); insert an empty-text segment for a deliberate visual break.
 ///
 /// Coordinate note: `lines` and `segmentExtents` live in "ribbon space":
 /// Y = 0 is the top of the ribbon, +Y grows downward, matching the order
@@ -43,7 +43,6 @@ final class RibbonLayout {
         let secondaryColor = style.secondaryTextColor.cgColor
         let lineHeight = style.lineHeight
         let textWidth = max(1, style.textWidth)
-        let gap = lineHeight * 0.35
 
         let chunkGroups = Chunker.chunks(
             for: script.segments,
@@ -93,10 +92,6 @@ final class RibbonLayout {
                 firstLineCenterY: firstCenter ?? (cursorTop + lineHeight / 2),
                 lastLineCenterY: lastCenter
             ))
-
-            if segIndex < script.segments.count - 1 {
-                cursorTop += gap
-            }
         }
 
         self.lines = builtLines

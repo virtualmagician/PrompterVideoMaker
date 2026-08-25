@@ -3,6 +3,7 @@ import AppKit
 
 /// Right pane: grouped Form with every style/export knob.
 struct InspectorView: View {
+    @State private var defaultsSaved = false
     @EnvironmentObject private var appState: AppState
 
     /// Binding onto the whole style struct; SwiftUI's dynamic member lookup
@@ -22,6 +23,7 @@ struct InspectorView: View {
             mirrorSection
             exportSection
             timingSection
+            defaultsSection
         }
         .formStyle(.grouped)
     }
@@ -164,6 +166,38 @@ struct InspectorView: View {
             .buttonStyle(.bordered)
         } header: {
             Label("Timing", systemImage: "clock.arrow.circlepath")
+        }
+    }
+
+    // MARK: Defaults
+
+    private var defaultsSection: some View {
+        Section {
+            Button {
+                appState.saveCurrentStyleAsDefault()
+                defaultsSaved = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(2))
+                    defaultsSaved = false
+                }
+            } label: {
+                if defaultsSaved {
+                    Label("Saved", systemImage: "checkmark.circle.fill")
+                } else {
+                    Label("Save Current Settings as Defaults", systemImage: "square.and.arrow.down")
+                }
+            }
+            Button(role: .destructive) {
+                appState.resetStyleToFactory()
+            } label: {
+                Label("Reset to Factory Settings", systemImage: "arrow.counterclockwise")
+            }
+        } header: {
+            Label("Defaults", systemImage: "slider.horizontal.2.square")
+        } footer: {
+            Text("Saved defaults apply to new documents and future launches.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

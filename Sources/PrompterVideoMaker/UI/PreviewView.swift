@@ -7,52 +7,40 @@ struct PreviewView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        GeometryReader { geo in
-            let size = fittedSize(in: geo.size)
-            ZStack {
-                if appState.composition != nil {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !appState.isPlaying)) { context in
-                        let time = appState.currentDisplayTime(at: context.date)
-                        Canvas { ctx, canvasSize in
-                            guard canvasSize.width > 0,
-                                  let cg = appState.composition?.image(
-                                    atVideoTime: time,
-                                    scale: canvasSize.width / StyleSettings.canvasWidth
-                                  ) else { return }
-                            ctx.draw(
-                                Image(decorative: cg, scale: 1, orientation: .up),
-                                in: CGRect(origin: .zero, size: canvasSize)
-                            )
-                        }
-                        .frame(width: size.width, height: size.height)
-                        .onChange(of: context.date) { _, newDate in
-                            appState.tick(date: newDate)
-                        }
+        // The visible pane is locked to the video's exact 16:9 aspect, so
+        // what you see is precisely the exported frame — no extra background
+        // beyond the video bounds.
+        Group {
+            if appState.composition != nil {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !appState.isPlaying)) { context in
+                    let time = appState.currentDisplayTime(at: context.date)
+                    Canvas { ctx, canvasSize in
+                        guard canvasSize.width > 0,
+                              let cg = appState.composition?.image(
+                                atVideoTime: time,
+                                scale: canvasSize.width / StyleSettings.canvasWidth
+                              ) else { return }
+                        ctx.draw(
+                            Image(decorative: cg, scale: 1, orientation: .up),
+                            in: CGRect(origin: .zero, size: canvasSize)
+                        )
                     }
-                    .frame(width: size.width, height: size.height)
-                    .clipped()
-                    .shadow(color: .black.opacity(0.4), radius: 24)
-                } else {
-                    emptyHint
+                    .onChange(of: context.date) { _, newDate in
+                        appState.tick(date: newDate)
+                    }
                 }
+            } else {
+                emptyHint
             }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .contentShape(Rectangle())
-            .onTapGesture { appState.togglePlay() }
         }
+        .aspectRatio(StyleSettings.canvasWidth / StyleSettings.canvasHeight, contentMode: .fit)
         .background(Color.black)
-    }
-
-    private func fittedSize(in container: CGSize) -> CGSize {
-        guard container.width > 0, container.height > 0 else { return .zero }
-        let aspect: CGFloat = StyleSettings.canvasWidth / StyleSettings.canvasHeight
-        var w = container.width
-        var h = w / aspect
-        if h > container.height {
-            h = container.height
-            w = h * aspect
-        }
-        return CGSize(width: max(w, 1), height: max(h, 1))
+        .clipped()
+        .shadow(color: .black.opacity(0.4), radius: 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(16)
+        .contentShape(Rectangle())
+        .onTapGesture { appState.togglePlay() }
     }
 
     private var emptyHint: some View {
