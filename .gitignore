@@ -1,0 +1,5 @@
+.build/
+.DS_Store
+dist/
+*.mp4
+Sample_Input/
