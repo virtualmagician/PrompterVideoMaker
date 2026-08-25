@@ -22,12 +22,27 @@ import Foundation
         #expect(pieces == ["Dr. Smith met Mr. Jones at the U.S. embassy.", "J. Doe arrived later."])
     }
 
-    @Test func splitsLinesAndParagraphs() {
+    @Test func splitsLinesAndParagraphsPreservingBreaks() {
         let text = "Line one\nLine two\n\nSecond paragraph\nstill second"
         #expect(ScriptImporter.split(text: text, granularity: .lines)
-                == ["Line one", "Line two", "Second paragraph", "still second"])
+                == ["Line one", "Line two", "", "Second paragraph", "still second"])
         #expect(ScriptImporter.split(text: text, granularity: .paragraphs)
-                == ["Line one Line two", "Second paragraph still second"])
+                == ["Line one Line two", "", "Second paragraph still second"])
+    }
+
+    @Test func blankLinesBecomeSpacerSegments() {
+        let script = ScriptImporter.script(fromPastedText: "First cue.\n\n\nSecond cue.", granularity: .sentences)
+        #expect(script.segments.count == 3)
+        #expect(script.segments[1].text.isEmpty)
+        #expect(script.segments[1].duration < 0.01)
+        #expect(script.segments[0].text == "First cue.")
+        #expect(script.segments[2].text == "Second cue.")
+    }
+
+    @Test func lineBreaksForceCueBoundariesInSentenceMode() {
+        // Two sentence fragments on separate lines must NOT be merged.
+        let pieces = ScriptImporter.split(text: "no punctuation here\nand none here", granularity: .sentences)
+        #expect(pieces == ["no punctuation here", "and none here"])
     }
 
     @Test func estimatedTimingsAreMonotone() {

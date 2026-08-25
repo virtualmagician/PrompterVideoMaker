@@ -65,6 +65,11 @@ struct StyleSettings: Codable, Equatable {
     /// Maximum words per alternating color chunk.
     var maxChunkWords: Int = 8
 
+    /// Height of an empty-line (spacer) segment as a multiple of the line
+    /// height. Optional so older saved projects/defaults still decode.
+    var blankLineHeightMultiple: CGFloat?
+    var resolvedBlankLineHeight: CGFloat { blankLineHeightMultiple ?? 1.0 }
+
     /// PostScript name; resolved with `resolvedFont()`.
     var fontName: String = "HelveticaNeue"
     /// In canvas pixels (1920x1080 space).

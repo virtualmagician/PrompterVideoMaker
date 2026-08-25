@@ -116,7 +116,7 @@ struct InspectorView: View {
         } header: {
             Label("Emphasis", systemImage: "wand.and.stars")
         } footer: {
-            Text("Type **bold**, __underline__ or ==accent== directly in any segment's text.")
+            Text(verbatim: "Type **bold**, __underline__ or ==accent== directly in any segment's text.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -156,6 +156,13 @@ struct InspectorView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Slider(value: style.lineHeightMultiple, in: 1.1...2.2, step: 0.05)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Empty Line Height: \(String(format: "%.2f", style.wrappedValue.resolvedBlankLineHeight))×")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Slider(value: blankLineHeightBinding, in: 0.2...2.0, step: 0.05)
             }
 
             VStack(alignment: .leading, spacing: 4) {
@@ -308,6 +315,13 @@ struct InspectorView: View {
         Binding(
             get: { appState.project.style.resolvedEmphasisColor.color },
             set: { appState.project.style.emphasisColor = RGBAColor(color: $0) }
+        )
+    }
+
+    private var blankLineHeightBinding: Binding<CGFloat> {
+        Binding(
+            get: { appState.project.style.resolvedBlankLineHeight },
+            set: { appState.project.style.blankLineHeightMultiple = $0 }
         )
     }
 

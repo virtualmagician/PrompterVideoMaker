@@ -94,10 +94,11 @@ enum EmphasisSuggester {
     static let systemPrompt = """
     You mark up teleprompter scripts to help a speaker deliver them well.
     You are given numbered script lines. Return the SAME numbered lines, adding:
-    - **double asterisks** around 1-3 words that deserve vocal stress (the words carrying the meaning of the sentence), and
-    - __double underscores__ around words that need careful enunciation (names, numbers, technical terms, foreign words).
+    - **double asterisks** around 1-3 words that deserve vocal stress (the words carrying the meaning of the sentence),
+    - __double underscores__ around words that need careful enunciation (names, numbers, technical terms, foreign words), and
+    - ==double equals== around the single most important word or short phrase of a KEY line — the idea the audience must remember. Use this rarely: at most one span per line, and only on the few lines that carry the core message.
     Rules:
-    - NEVER change, add, remove, or reorder any words or punctuation. Only insert ** or __ markers.
+    - NEVER change, add, remove, or reorder any words or punctuation. Only insert **, __ or == markers.
     - Markers must directly touch the words: **like this**, never ** like this **.
     - Be sparing. Many lines need no markers at all; a line should never have more than 3 marked spans.
     - Output ONLY the numbered lines, one per line, in the same "N| text" format. No commentary.

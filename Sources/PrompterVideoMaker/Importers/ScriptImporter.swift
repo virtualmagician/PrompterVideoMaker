@@ -24,6 +24,12 @@ enum ScriptImporter {
         var segments: [Segment] = []
         var t = 0.0
         for piece in pieces {
+            if piece.isEmpty {
+                // Blank line in the source → zero-length spacer segment
+                // (renders as an empty line, keeps the pasted structure).
+                segments.append(Segment(text: "", start: t, end: t))
+                continue
+            }
             let words = piece.split(whereSeparator: { $0.isWhitespace }).count
             var duration = Double(words) / wps
             if piece.hasSuffix(".") || piece.hasSuffix("!") || piece.hasSuffix("?") {
@@ -38,36 +44,66 @@ enum ScriptImporter {
         return script
     }
 
-    /// Splits pasted text into cue-sized pieces.
+    /// Splits pasted text into cue-sized pieces. Line breaks are preserved:
+    /// every blank line in the source becomes one empty piece ("") which the
+    /// script builder turns into a spacer segment, and (for sentences) a
+    /// line break always forces a cue boundary.
     static func split(text: String, granularity: ScriptGranularity) -> [String] {
         let cleaned = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let rawLines = cleaned.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+
+        // Collapse runs of blank lines to a single "" break marker and trim
+        // leading/trailing blanks.
+        var lines: [String] = []
+        for line in rawLines {
+            if line.isEmpty {
+                if let last = lines.last, !last.isEmpty { lines.append("") }
+            } else {
+                lines.append(line)
+            }
+        }
+        while lines.last?.isEmpty == true { lines.removeLast() }
 
         switch granularity {
         case .lines:
-            return cleaned
-                .components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
+            return lines
 
         case .paragraphs:
-            return cleaned
-                .components(separatedBy: "\n\n")
-                .map {
-                    $0.components(separatedBy: "\n")
-                        .map { $0.trimmingCharacters(in: .whitespaces) }
-                        .filter { !$0.isEmpty }
-                        .joined(separator: " ")
+            // Paragraph = consecutive non-blank lines joined; the blank
+            // separators stay as break markers.
+            var result: [String] = []
+            var current: [String] = []
+            for line in lines {
+                if line.isEmpty {
+                    if !current.isEmpty { result.append(current.joined(separator: " ")); current = [] }
+                    result.append("")
+                } else {
+                    current.append(line)
                 }
-                .filter { !$0.isEmpty }
+            }
+            if !current.isEmpty { result.append(current.joined(separator: " ")) }
+            return result
 
         case .sentences:
-            // Newlines become soft breaks; split the flowed text at sentence
-            // enders, keeping the punctuation with the sentence.
-            let flowed = cleaned
-                .components(separatedBy: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
+            // Sentence-split each line independently — a line break always
+            // ends a cue — and keep blank-line break markers.
+            var result: [String] = []
+            for line in lines {
+                if line.isEmpty {
+                    result.append("")
+                } else {
+                    result.append(contentsOf: splitSentences(in: line))
+                }
+            }
+            return result
+        }
+    }
+
+    /// Splits one line of text at sentence enders, keeping the punctuation
+    /// with the sentence.
+    private static func splitSentences(in flowed: String) -> [String] {
+        do {
             var sentences: [String] = []
             var current = ""
             var i = flowed.startIndex

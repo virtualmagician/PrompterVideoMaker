@@ -13,9 +13,13 @@ struct ContentView: View {
                 .frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
 
             VStack(spacing: 0) {
-                PreviewView()
-                Divider()
-                TransportBar()
+                if appState.recordPaneVisible {
+                    RecordingPane(recorder: appState.recorder)
+                } else {
+                    PreviewView()
+                    Divider()
+                    TransportBar()
+                }
             }
             .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
 
@@ -47,7 +51,7 @@ struct ContentView: View {
                 .disabled(appState.project.script.isEmpty)
 
                 Button {
-                    appState.showRecordSheet = true
+                    appState.recordPaneVisible = true
                 } label: {
                     Label("Record Timing", systemImage: "record.circle")
                 }
@@ -78,9 +82,6 @@ struct ContentView: View {
         .sheet(isPresented: $appState.showNewScriptSheet) {
             NewScriptSheet()
         }
-        .sheet(isPresented: recordSheetBinding) {
-            RecordSheet(recorder: appState.recorder)
-        }
         .alert("Something Went Wrong", isPresented: errorBinding) {
             Button("OK", role: .cancel) { appState.errorMessage = nil }
         } message: {
@@ -96,14 +97,6 @@ struct ContentView: View {
     }
     private var exportingBinding: Binding<Bool> {
         Binding(get: { appState.exportPhase != .idle }, set: { if !$0 { appState.cancelExport() } })
-    }
-    /// Escape/system dismissal must tear the recording down, mirroring the
-    /// transcribe/export bindings above.
-    private var recordSheetBinding: Binding<Bool> {
-        Binding(
-            get: { appState.showRecordSheet },
-            set: { if $0 { appState.showRecordSheet = true } else { appState.cancelRecording() } }
-        )
     }
 }
 

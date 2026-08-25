@@ -80,14 +80,16 @@ final class RibbonLayout {
             var lastCenter: CGFloat = cursorTop + lineHeight / 2
 
             if ctLines.isEmpty {
-                // Reserve a blank line so extents stay meaningful even for empty cues.
-                let centerY = cursorTop + lineHeight / 2
-                let baselineY = Self.baseline(forCenterY: centerY, lineHeight: lineHeight, font: font)
+                // Reserve a blank (spacer) line; its height is adjustable via
+                // style.blankLineHeightMultiple.
+                let blankHeight = lineHeight * max(0.1, style.resolvedBlankLineHeight)
+                let centerY = cursorTop + blankHeight / 2
+                let baselineY = Self.baseline(forCenterY: centerY, lineHeight: blankHeight, font: font)
                 let empty = CTLineCreateWithAttributedString(NSAttributedString(string: "", attributes: [.font: font]))
                 builtLines.append(Line(ctLine: empty, baselineY: baselineY, centerY: centerY, segmentIndex: segIndex))
                 firstCenter = centerY
                 lastCenter = centerY
-                cursorTop += lineHeight
+                cursorTop += blankHeight
             } else {
                 for ctLine in ctLines {
                     let centerY = cursorTop + lineHeight / 2

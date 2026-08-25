@@ -64,7 +64,7 @@ final class AppState: ObservableObject {
 
     @Published var recordPhase: RecordPhase = .idle
     @Published var showNewScriptSheet = false
-    @Published var showRecordSheet = false
+    @Published var recordPaneVisible = false
     let recorder = AudioRecorder()
 
     /// Where the currently loaded project was opened from / last saved to.
@@ -565,7 +565,54 @@ final class AppState: ObservableObject {
             try? FileManager.default.removeItem(at: url)
         }
         recordPhase = .idle
-        showRecordSheet = false
+        recordPaneVisible = false
+    }
+
+    /// Closes the recording pane. While a recording/alignment is in flight
+    /// this cancels it first (mirroring the old sheet's dismiss binding);
+    /// otherwise it just resets the phase and hides the pane so the next
+    /// visit starts clean.
+    func closeRecordPane() {
+        switch recordPhase {
+        case .recording, .aligning:
+            cancelRecording()
+        default:
+            recordPhase = .idle
+            recordPaneVisible = false
+        }
+    }
+
+    /// Same alignment tail as `stopRecordingAndAlign`, but starting from an
+    /// existing audio file instead of a live recorder take. The script text
+    /// is left completely untouched — only per-segment timings (and the
+    /// attached audio) come from the file, since the Aligner preserves
+    /// segment ids/texts and only rewrites `start`/`end`.
+    func alignFromAudioFile(url: URL) {
+        recordAlignTask?.cancel()
+        recordPhase = .aligning(0)
+        recordAlignTask = Task {
+            do {
+                let words = try await Transcriber.timedWords(audioURL: url) { [weak self] p in
+                    Task { @MainActor in
+                        if case .aligning = self?.recordPhase {
+                            self?.recordPhase = .aligning(p)
+                        }
+                    }
+                }
+                try Task.checkCancellation()
+                let result = Aligner.align(script: project.script, words: words)
+                project.script.segments = result.segments
+                project.audioPath = url.path
+                project.globalOffset = nil
+                pause()
+                playheadVideoTime = 0
+                recordPhase = .done(matchRate: result.matchRate, audioURL: url)
+            } catch is CancellationError {
+                recordPhase = .idle
+            } catch {
+                recordPhase = .failed(error.localizedDescription)
+            }
+        }
     }
 
     // MARK: - Save project
