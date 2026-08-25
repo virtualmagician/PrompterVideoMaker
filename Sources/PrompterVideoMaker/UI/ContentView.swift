@@ -78,7 +78,7 @@ struct ContentView: View {
         .sheet(isPresented: $appState.showNewScriptSheet) {
             NewScriptSheet()
         }
-        .sheet(isPresented: $appState.showRecordSheet) {
+        .sheet(isPresented: recordSheetBinding) {
             RecordSheet(recorder: appState.recorder)
         }
         .alert("Something Went Wrong", isPresented: errorBinding) {
@@ -96,6 +96,14 @@ struct ContentView: View {
     }
     private var exportingBinding: Binding<Bool> {
         Binding(get: { appState.exportPhase != .idle }, set: { if !$0 { appState.cancelExport() } })
+    }
+    /// Escape/system dismissal must tear the recording down, mirroring the
+    /// transcribe/export bindings above.
+    private var recordSheetBinding: Binding<Bool> {
+        Binding(
+            get: { appState.showRecordSheet },
+            set: { if $0 { appState.showRecordSheet = true } else { appState.cancelRecording() } }
+        )
     }
 }
 

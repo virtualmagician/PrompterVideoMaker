@@ -14,6 +14,14 @@ import Foundation
         #expect(pieces == ["It costs 3.5 million euros.", "Truly."])
     }
 
+    @Test func abbreviationDotsDoNotSplit() {
+        let pieces = ScriptImporter.split(
+            text: "Dr. Smith met Mr. Jones at the U.S. embassy. J. Doe arrived later.",
+            granularity: .sentences
+        )
+        #expect(pieces == ["Dr. Smith met Mr. Jones at the U.S. embassy.", "J. Doe arrived later."])
+    }
+
     @Test func splitsLinesAndParagraphs() {
         let text = "Line one\nLine two\n\nSecond paragraph\nstill second"
         #expect(ScriptImporter.split(text: text, granularity: .lines)
@@ -102,6 +110,27 @@ import Foundation
         #expect(r.matchRate > 0.99)
         #expect(abs(r.segments[0].start - 1.0) < 0.001)
         #expect(abs(r.segments[0].end - 3.2) < 0.001)
+    }
+
+    @Test func overlappingASRTimestampsNeverReorderSegments() {
+        // "now" (last matched word before the hole) ENDS after "Outro"
+        // (first matched word after the hole) STARTS — the interpolated
+        // middle segment must still land between them in script order.
+        let script = Script(segments: [
+            Segment(text: "Intro begins now.", start: 0, end: 1),
+            Segment(text: "Completely skipped words.", start: 1, end: 2),
+            Segment(text: "Outro closes fast.", start: 2, end: 3),
+        ])
+        let rec = words([
+            ("Intro", 10.0, 10.2), ("begins", 10.3, 10.5), ("now", 10.6, 10.8),
+            ("Outro", 10.79, 11.0), ("closes", 11.1, 11.4), ("fast", 11.5, 11.8),
+        ])
+        let r = Aligner.align(script: script, words: rec)
+        let texts = r.segments.map(\.text)
+        #expect(texts == ["Intro begins now.", "Completely skipped words.", "Outro closes fast."])
+        for i in 1..<r.segments.count {
+            #expect(r.segments[i].start > r.segments[i - 1].start)
+        }
     }
 
     @Test func emptyRecognitionKeepsScriptWithZeroRate() {

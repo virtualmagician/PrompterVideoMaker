@@ -84,7 +84,23 @@ enum ScriptImporter {
                     }
                     let nextIsSpace = j == flowed.endIndex || flowed[j] == " "
                     let isDecimalDot = ch == "." && j < flowed.endIndex && flowed[j].isNumber
-                    if nextIsSpace && !isDecimalDot {
+                    // Abbreviation dots ("Dr.", "U.S.", initials like "J.")
+                    // do not end a sentence.
+                    var isAbbrevDot = false
+                    if ch == "." {
+                        let lastWord = current.dropLast()
+                            .split(whereSeparator: { $0.isWhitespace }).last.map(String.init) ?? ""
+                        let token = lastWord.lowercased()
+                            .trimmingCharacters(in: CharacterSet(charactersIn: ".\"'()[]“”‘’"))
+                        let abbreviations: Set<String> = [
+                            "dr", "mr", "mrs", "ms", "prof", "st", "jr", "sr",
+                            "vs", "etc", "fig", "eg", "ie", "approx", "dept", "inc",
+                        ]
+                        isAbbrevDot = abbreviations.contains(token)
+                            || token.count == 1
+                            || lastWord.dropLast().contains(".")
+                    }
+                    if nextIsSpace && !isDecimalDot && !isAbbrevDot {
                         let s = current.trimmingCharacters(in: .whitespaces)
                         if !s.isEmpty { sentences.append(s) }
                         current = ""

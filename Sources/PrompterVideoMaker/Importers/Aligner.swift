@@ -155,7 +155,10 @@ enum Aligner {
             }
             let totalWords = Double(wordCounts.reduce(0, +))
             let span = max(0.5, nextStart - prevEnd)
-            var cursor = prevEnd
+            // ASR end timestamps can overrun the next word's start; starting
+            // the hole later than nextStart would let normalize()'s sort
+            // reorder segments. Clamp so script order is always preserved.
+            var cursor = min(prevEnd, nextStart)
             for (idx, h) in holeIndices.enumerated() {
                 let share = span * Double(wordCounts[idx]) / totalWords
                 starts[h] = cursor
