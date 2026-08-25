@@ -18,6 +18,12 @@ enum TranscribePhase: Equatable {
     case failed(String)
 }
 
+enum EmphasisPhase: Equatable {
+    case idle
+    case running(Double)
+    case failed(String)
+}
+
 enum ExportPhase: Equatable {
     case idle
     case exporting(Double)
@@ -53,6 +59,7 @@ final class AppState: ObservableObject {
     @Published var pendingSRTImport: PendingSRTImport?
     @Published var transcribePhase: TranscribePhase = .idle
     @Published var exportPhase: ExportPhase = .idle
+    @Published var emphasisPhase: EmphasisPhase = .idle
     @Published var errorMessage: String?
 
     @Published var recordPhase: RecordPhase = .idle
@@ -73,6 +80,7 @@ final class AppState: ObservableObject {
     private var transcribeTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
     private var recordAlignTask: Task<Void, Never>?
+    private var emphasisTask: Task<Void, Never>?
 
     var videoDuration: Double { composition?.videoDuration ?? 0 }
 
@@ -433,6 +441,41 @@ final class AppState: ObservableObject {
         transcribeTask?.cancel()
         transcribeTask = nil
         transcribePhase = .idle
+    }
+
+    // MARK: - Emphasis suggestions
+
+    func suggestEmphasis(model: String) {
+        guard !project.script.isEmpty, emphasisPhase == .idle else { return }
+        emphasisPhase = .running(0)
+        emphasisTask = Task {
+            do {
+                let suggested = try await EmphasisSuggester.suggest(segments: project.script.segments, model: model) { [weak self] p in
+                    Task { @MainActor in
+                        if case .running = self?.emphasisPhase {
+                            self?.emphasisPhase = .running(p)
+                        }
+                    }
+                }
+                try Task.checkCancellation()
+                project.script.segments = suggested
+                emphasisPhase = .idle
+            } catch is CancellationError {
+                emphasisPhase = .idle
+            } catch {
+                emphasisPhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    func cancelEmphasis() {
+        emphasisTask?.cancel()
+        emphasisTask = nil
+        emphasisPhase = .idle
+    }
+
+    func clearEmphasis() {
+        project.script.segments = EmphasisSuggester.clear(segments: project.script.segments)
     }
 
     // MARK: - Write-in-app / record-and-align

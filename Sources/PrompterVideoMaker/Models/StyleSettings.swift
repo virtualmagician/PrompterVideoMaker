@@ -35,6 +35,8 @@ struct RGBAColor: Codable, Equatable, Hashable {
 
     static let black = RGBAColor(r: 0, g: 0, b: 0)
     static let white = RGBAColor(r: 1, g: 1, b: 1)
+    /// Accent used by ==emphasis== markup (warm yellow).
+    static let emphasisYellow = RGBAColor(r: 1.0, g: 0.84, b: 0.04)
     /// Prompter green (like the reference still).
     static let promptGreen = RGBAColor(r: 0.28, g: 0.87, b: 0.34)
     /// Marker red-orange.
@@ -56,6 +58,10 @@ struct StyleSettings: Codable, Equatable {
     var secondaryTextColor: RGBAColor = .promptGreen
     /// Alternate chunk colors to make long text easier to track.
     var alternatingColors: Bool = true
+    /// Color for ==emphasis== markup; overrides the alternating colors.
+    /// Optional so projects/defaults saved by older versions still decode.
+    var emphasisColor: RGBAColor?
+    var resolvedEmphasisColor: RGBAColor { emphasisColor ?? .emphasisYellow }
     /// Maximum words per alternating color chunk.
     var maxChunkWords: Int = 8
 

@@ -39,13 +39,21 @@ final class RibbonLayout {
 
     init(script: Script, style: StyleSettings) {
         let font = style.resolvedFont()
+        let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         let primaryColor = style.primaryTextColor.cgColor
         let secondaryColor = style.secondaryTextColor.cgColor
+        let accentColor = style.resolvedEmphasisColor.cgColor
         let lineHeight = style.lineHeight
         let textWidth = max(1, style.textWidth)
 
+        // Emphasis markup (**bold** __underline__ ==accent==) is parsed out
+        // first; chunking and layout run on the plain text.
+        let parsed = script.segments.map { EmphasisMarkup.parse($0.text) }
+        var plainSegments = script.segments
+        for i in plainSegments.indices { plainSegments[i].text = parsed[i].plain }
+
         let chunkGroups = Chunker.chunks(
-            for: script.segments,
+            for: plainSegments,
             maxWords: style.maxChunkWords,
             alternate: style.alternatingColors
         )
@@ -54,14 +62,17 @@ final class RibbonLayout {
         var extents: [SegmentExtent] = []
         var cursorTop: CGFloat = 0
 
-        for (segIndex, segment) in script.segments.enumerated() {
+        for (segIndex, _) in script.segments.enumerated() {
             let chunks = segIndex < chunkGroups.count ? chunkGroups[segIndex] : []
             let attrString = Self.buildAttributedString(
                 chunks: chunks,
+                runs: parsed[segIndex].runs,
                 font: font,
+                boldFont: boldFont,
                 primary: primaryColor,
                 secondary: secondaryColor,
-                fallbackText: segment.text
+                accent: accentColor,
+                fallbackText: parsed[segIndex].plain
             )
             let ctLines = Self.wrapLines(attrString: attrString, maxWidth: textWidth)
 
@@ -110,29 +121,49 @@ final class RibbonLayout {
         return glyphBoxTop + ascent
     }
 
+    private static let underlineKey = NSAttributedString.Key(kCTUnderlineStyleAttributeName as String)
+
     private static func buildAttributedString(
         chunks: [TextChunk],
+        runs: [EmphasisMarkup.Run],
         font: NSFont,
+        boldFont: NSFont,
         primary: CGColor,
         secondary: CGColor,
+        accent: CGColor,
         fallbackText: String
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        guard !chunks.isEmpty else {
+        if chunks.isEmpty {
             if !fallbackText.isEmpty {
                 result.append(NSAttributedString(
                     string: fallbackText,
                     attributes: [.font: font, foregroundColorKey: primary]
                 ))
             }
-            return result
-        }
-        for (i, chunk) in chunks.enumerated() {
-            let color = chunk.colorIndex == 0 ? primary : secondary
-            if i > 0 {
-                result.append(NSAttributedString(string: " ", attributes: [.font: font, foregroundColorKey: color]))
+        } else {
+            for (i, chunk) in chunks.enumerated() {
+                let color = chunk.colorIndex == 0 ? primary : secondary
+                if i > 0 {
+                    result.append(NSAttributedString(string: " ", attributes: [.font: font, foregroundColorKey: color]))
+                }
+                result.append(NSAttributedString(string: chunk.text, attributes: [.font: font, foregroundColorKey: color]))
             }
-            result.append(NSAttributedString(string: chunk.text, attributes: [.font: font, foregroundColorKey: color]))
+        }
+
+        // Overlay emphasis runs; their UTF-16 ranges refer to the plain text,
+        // which is exactly the chunk texts joined by single spaces.
+        let totalLen = result.length
+        for run in runs {
+            let lo = max(0, min(run.range.lowerBound, totalLen))
+            let hi = max(lo, min(run.range.upperBound, totalLen))
+            guard hi > lo else { continue }
+            let r = NSRange(location: lo, length: hi - lo)
+            if run.bold { result.addAttribute(.font, value: boldFont, range: r) }
+            if run.underline {
+                result.addAttribute(Self.underlineKey, value: CTUnderlineStyle.single.rawValue as NSNumber, range: r)
+            }
+            if run.accent { result.addAttribute(foregroundColorKey, value: accent, range: r) }
         }
         return result
     }

@@ -27,7 +27,67 @@ enum HeadlessRunner {
             runAlign(args: args)
             return true
         }
+        if args.contains("--emphasize") {
+            runEmphasize(args: args)
+            return true
+        }
         return false
+    }
+
+    // MARK: - --emphasize
+
+    /// --emphasize --srt <in.srt> --out <out.srt> [--model <ollama model>]
+    /// Adds AI-suggested **bold**/__underline__ emphasis markup via a local
+    /// Ollama model.
+    private static func runEmphasize(args: [String]) {
+        guard let srtPath = value(for: "--srt", in: args) else { fail("--emphasize requires --srt <path>") }
+        guard let outPath = value(for: "--out", in: args) else { fail("--emphasize requires --out <path.srt>") }
+        let modelFlag = value(for: "--model", in: args)
+
+        do {
+            let segments = try loadSegments(srtPath: srtPath)
+            let semaphore = DispatchSemaphore(value: 0)
+            var result: Result<[Segment], Error>?
+            Task {
+                do {
+                    let client = OllamaClient()
+                    let model: String
+                    if let modelFlag {
+                        model = modelFlag
+                    } else {
+                        let models = try await client.installedModels()
+                        guard let first = models.first(where: { $0.hasPrefix("gemma") }) ?? models.first else {
+                            throw OllamaError.badResponse("no generative models installed")
+                        }
+                        model = first
+                    }
+                    print("model: \(model)")
+                    let suggested = try await EmphasisSuggester.suggest(segments: segments, model: model) { p in
+                        print("progress: \(Int((p * 100).rounded()))%")
+                        fflush(stdout)
+                    }
+                    result = .success(suggested)
+                } catch {
+                    result = .failure(error)
+                }
+                semaphore.signal()
+            }
+            semaphore.wait()
+
+            switch result {
+            case .success(let suggested):
+                try SRTParser.serialize(suggested).write(toFile: outPath, atomically: true, encoding: .utf8)
+                let changed = zip(segments, suggested).filter { $0.text != $1.text }.count
+                print("emphasized \(changed) of \(segments.count) cues")
+                print("Emphasized SRT written: \(outPath)")
+            case .failure(let error):
+                fail("Emphasis failed: \(error.localizedDescription)")
+            case nil:
+                fail("Emphasis did not complete")
+            }
+        } catch {
+            fail("Emphasis failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - --align

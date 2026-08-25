@@ -4,6 +4,9 @@ import AppKit
 /// Right pane: grouped Form with every style/export knob.
 struct InspectorView: View {
     @State private var defaultsSaved = false
+    @State private var ollamaModels: [String] = []
+    @State private var ollamaUnavailable = false
+    @AppStorage("PVMOllamaModel") private var selectedOllamaModel: String = ""
     @EnvironmentObject private var appState: AppState
 
     /// Binding onto the whole style struct; SwiftUI's dynamic member lookup
@@ -18,6 +21,7 @@ struct InspectorView: View {
     var body: some View {
         Form {
             colorsSection
+            emphasisSection
             textSection
             markerSection
             mirrorSection
@@ -46,6 +50,87 @@ struct InspectorView: View {
             }
         } header: {
             Label("Colors", systemImage: "paintpalette")
+        }
+    }
+
+    // MARK: Emphasis
+
+    private var emphasisSection: some View {
+        Section {
+            ColorPicker("Accent Color", selection: emphasisColorBinding)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("AI Suggestions")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if !ollamaModels.isEmpty {
+                    Picker("Model", selection: $selectedOllamaModel) {
+                        ForEach(ollamaModels, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                } else if ollamaUnavailable {
+                    Text("Ollama not running")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                switch appState.emphasisPhase {
+                case .idle:
+                    EmptyView()
+                case .running(let progress):
+                    HStack {
+                        ProgressView(value: progress)
+                        Button("Cancel") {
+                            appState.cancelEmphasis()
+                        }
+                        .controlSize(.small)
+                    }
+                case .failed(let message):
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                        Button("Dismiss") {
+                            appState.cancelEmphasis()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+
+                Button {
+                    appState.suggestEmphasis(model: selectedOllamaModel)
+                } label: {
+                    Label("Suggest Emphasis", systemImage: "sparkles")
+                }
+                .disabled(appState.project.script.isEmpty || ollamaModels.isEmpty || appState.emphasisPhase != .idle)
+            }
+
+            Button(role: .destructive) {
+                appState.clearEmphasis()
+            } label: {
+                Label("Clear All Emphasis", systemImage: "eraser")
+            }
+            .disabled(appState.project.script.isEmpty)
+        } header: {
+            Label("Emphasis", systemImage: "wand.and.stars")
+        } footer: {
+            Text("Type **bold**, __underline__ or ==accent== directly in any segment's text.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .task {
+            do {
+                let names = try await OllamaClient().installedModels()
+                ollamaModels = names
+                if selectedOllamaModel.isEmpty || !names.contains(selectedOllamaModel) {
+                    selectedOllamaModel = names.first { $0.lowercased().hasPrefix("gemma") } ?? names.first ?? ""
+                }
+                ollamaUnavailable = false
+            } catch {
+                ollamaUnavailable = true
+            }
         }
     }
 
@@ -216,6 +301,13 @@ struct InspectorView: View {
         Binding(
             get: { appState.project.style[keyPath: keyPath].color },
             set: { appState.project.style[keyPath: keyPath] = RGBAColor(color: $0) }
+        )
+    }
+
+    private var emphasisColorBinding: Binding<Color> {
+        Binding(
+            get: { appState.project.style.resolvedEmphasisColor.color },
+            set: { appState.project.style.emphasisColor = RGBAColor(color: $0) }
         )
     }
 
