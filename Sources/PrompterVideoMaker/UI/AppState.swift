@@ -194,6 +194,27 @@ final class AppState: ObservableObject {
     func jumpToStart() { seek(to: 0) }
     func jumpToEnd() { seek(to: videoDuration) }
 
+    /// Scrolls the prompter by ribbon pixels (positive = forward), driven by
+    /// the scroll wheel / trackpad over the preview.
+    func scrubByRibbonPixels(_ delta: CGFloat) {
+        guard let comp = composition else { return }
+        let current = comp.scrollOffset(atVideoTime: playheadVideoTime)
+        seek(to: comp.videoTime(forScrollOffset: current + delta))
+    }
+
+    /// Open panel for "align an audio file to the current script" — timings
+    /// come from the file, the script text stays untouched.
+    func presentAlignAudioPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose an Audio Recording"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.wav, .mp3, .mpeg4Audio, .aiff]
+        if panel.runModal() == .OK, let url = panel.url {
+            alignFromAudioFile(url: url)
+        }
+    }
+
     func selectSegment(_ id: UUID) {
         selectedSegmentID = id
         if let seg = project.script.segments.first(where: { $0.id == id }) {

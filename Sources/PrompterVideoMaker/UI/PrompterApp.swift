@@ -27,6 +27,13 @@ struct PrompterApp: App {
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
+                Button("Align Audio to Script…") {
+                    appState.openRecordPane()
+                    appState.presentAlignAudioPanel()
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(appState.project.script.isEmpty)
+
                 Divider()
 
                 Button("Save Project") {

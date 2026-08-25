@@ -106,14 +106,16 @@ struct RecordingPane: View {
                 .tint(.red)
 
                 Button {
-                    presentAudioFilePanel()
+                    appState.presentAlignAudioPanel()
                 } label: {
                     Label("Use Audio File\u{2026}", systemImage: "folder.badge.plus")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.system(size: 15, weight: .semibold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(Color(white: 0.32))
+                .foregroundStyle(.white)
             }
 
             Text("Recording keeps your script text; only the timings (and the audio) come from the take.")
@@ -221,19 +223,6 @@ struct RecordingPane: View {
             .keyboardShortcut(.defaultAction)
         }
         .padding(20)
-    }
-
-    // MARK: - Audio file panel
-
-    private func presentAudioFilePanel() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose an Audio Recording"
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.wav, .mp3, .mpeg4Audio, .aiff]
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.alignFromAudioFile(url: url)
-        }
     }
 
     private func formatElapsed(_ t: TimeInterval) -> String {

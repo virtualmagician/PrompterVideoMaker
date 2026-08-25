@@ -44,6 +44,26 @@ final class PrompterComposition {
     }
 
     /// Renders a full frame at `scale` (1.0 -> 1920x1080; 0.5 -> 960x540).
+    /// Ribbon scroll offset at a video time (for wheel scrubbing).
+    func scrollOffset(atVideoTime t: Double) -> CGFloat {
+        CGFloat(scrollCurve.offset(at: t - style.leadIn))
+    }
+
+    /// Inverse of `scrollOffset(atVideoTime:)` by bisection — the curve is
+    /// monotone, so this finds the video time whose ribbon position matches
+    /// `target`, clamped to [0, videoDuration].
+    func videoTime(forScrollOffset target: CGFloat) -> Double {
+        var lo = 0.0
+        var hi = videoDuration
+        if scrollOffset(atVideoTime: lo) >= target { return lo }
+        if scrollOffset(atVideoTime: hi) <= target { return hi }
+        for _ in 0..<40 {
+            let mid = (lo + hi) / 2
+            if scrollOffset(atVideoTime: mid) < target { lo = mid } else { hi = mid }
+        }
+        return (lo + hi) / 2
+    }
+
     func image(atVideoTime t: Double, scale: CGFloat) -> CGImage? {
         let width = max(2, Int((StyleSettings.canvasWidth * scale).rounded()))
         let height = max(2, Int((StyleSettings.canvasHeight * scale).rounded()))

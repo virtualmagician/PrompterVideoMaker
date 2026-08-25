@@ -35,12 +35,65 @@ struct PreviewView: View {
         }
         .aspectRatio(StyleSettings.canvasWidth / StyleSettings.canvasHeight, contentMode: .fit)
         .background(Color.black)
+        .background(ScrollWheelCatcher { ribbonDelta in
+            appState.scrubByRibbonPixels(ribbonDelta)
+        })
         .clipped()
         .shadow(color: .black.opacity(0.4), radius: 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(16)
         .contentShape(Rectangle())
         .onTapGesture { appState.togglePlay() }
+    }
+
+    /// Routes scroll-wheel / trackpad scrolling over the preview into a
+    /// callback with the delta converted to ribbon (1920-wide canvas) pixels;
+    /// positive = scroll the prompter forward. Uses a local event monitor so
+    /// clicks and other gestures pass through untouched.
+    private struct ScrollWheelCatcher: NSViewRepresentable {
+        let onScroll: (CGFloat) -> Void
+
+        func makeNSView(context: Context) -> MonitorView { MonitorView(onScroll: onScroll) }
+        func updateNSView(_ nsView: MonitorView, context: Context) { nsView.onScroll = onScroll }
+
+        final class MonitorView: NSView {
+            var onScroll: (CGFloat) -> Void
+            private var monitor: Any?
+
+            init(onScroll: @escaping (CGFloat) -> Void) {
+                self.onScroll = onScroll
+                super.init(frame: .zero)
+            }
+
+            @available(*, unavailable)
+            required init?(coder: NSCoder) { fatalError("unused") }
+
+            override func viewDidMoveToWindow() {
+                super.viewDidMoveToWindow()
+                if window != nil, monitor == nil {
+                    monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                        guard let self, let window = self.window, event.window === window else { return event }
+                        let p = self.convert(event.locationInWindow, from: nil)
+                        guard self.bounds.contains(p), self.bounds.width > 1 else { return event }
+                        // Line-based wheels report small deltas; scale them up.
+                        let raw = event.hasPreciseScrollingDeltas
+                            ? event.scrollingDeltaY
+                            : event.scrollingDeltaY * 12
+                        // Toward end of document = negative deltaY = forward.
+                        let ribbonDelta = -raw * (StyleSettings.canvasWidth / self.bounds.width)
+                        self.onScroll(ribbonDelta)
+                        return nil
+                    }
+                } else if window == nil, let m = monitor {
+                    NSEvent.removeMonitor(m)
+                    monitor = nil
+                }
+            }
+
+            deinit {
+                if let m = monitor { NSEvent.removeMonitor(m) }
+            }
+        }
     }
 
     private var emptyHint: some View {
