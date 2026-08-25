@@ -25,19 +25,24 @@ enum TranscriberError: LocalizedError {
 enum Transcriber {
 
     /// A recognized word with its audio time range.
-    private struct TimedWord {
+    struct TimedWord {
         let text: String
         let start: TimeInterval
         let end: TimeInterval
     }
 
-    static func transcribe(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [Segment] {
-        let words: [TimedWord]
+    /// Raw recognized words with timestamps (used directly by the
+    /// script/recording aligner).
+    static func timedWords(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [TimedWord] {
         if #available(macOS 26.0, *) {
-            words = try await transcribeModern(audioURL: audioURL, progress: progress)
+            return try await transcribeModern(audioURL: audioURL, progress: progress)
         } else {
-            words = try await transcribeLegacy(audioURL: audioURL, progress: progress)
+            return try await transcribeLegacy(audioURL: audioURL, progress: progress)
         }
+    }
+
+    static func transcribe(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [Segment] {
+        let words = try await timedWords(audioURL: audioURL, progress: progress)
         guard !words.isEmpty else { throw TranscriberError.noSpeechFound }
         return group(words: words)
     }

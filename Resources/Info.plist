@@ -34,6 +34,8 @@
 	<string>NSApplication</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Prompter Video Maker transcribes your audio recordings on this Mac to build the teleprompter script.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Prompter Video Maker records your voice while you read the script so it can derive the teleprompter timings from your delivery.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

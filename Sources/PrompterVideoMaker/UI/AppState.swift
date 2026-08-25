@@ -25,6 +25,14 @@ enum ExportPhase: Equatable {
     case failed(String)
 }
 
+enum RecordPhase: Equatable {
+    case idle
+    case recording
+    case aligning(Double)
+    case done(matchRate: Double, audioURL: URL)
+    case failed(String)
+}
+
 private extension UTType {
     static var srtSubtitle: UTType { UTType(filenameExtension: "srt") ?? .plainText }
     static var prompterProject: UTType { UTType(filenameExtension: "prompterproj") ?? .json }
@@ -47,6 +55,11 @@ final class AppState: ObservableObject {
     @Published var exportPhase: ExportPhase = .idle
     @Published var errorMessage: String?
 
+    @Published var recordPhase: RecordPhase = .idle
+    @Published var showNewScriptSheet = false
+    @Published var showRecordSheet = false
+    let recorder = AudioRecorder()
+
     /// Where the currently loaded project was opened from / last saved to.
     var projectFileURL: URL?
 
@@ -59,6 +72,7 @@ final class AppState: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var transcribeTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
+    private var recordAlignTask: Task<Void, Never>?
 
     var videoDuration: Double { composition?.videoDuration ?? 0 }
 
@@ -419,6 +433,76 @@ final class AppState: ObservableObject {
         transcribeTask?.cancel()
         transcribeTask = nil
         transcribePhase = .idle
+    }
+
+    // MARK: - Write-in-app / record-and-align
+
+    /// Builds a script directly from pasted text (see `NewScriptSheet`),
+    /// estimating timings the same way SRT-less scripts always have.
+    func createScript(fromText text: String, granularity: ScriptGranularity) {
+        let script = ScriptImporter.script(fromPastedText: text, granularity: granularity)
+        project.script = script
+        project.audioPath = nil
+        project.globalOffset = nil
+        selectedSegmentID = script.segments.first?.id
+        pause()
+        playheadVideoTime = 0
+        showNewScriptSheet = false
+    }
+
+    func startRecording() {
+        do {
+            try recorder.start()
+            recordPhase = .recording
+        } catch {
+            recordPhase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Stops the recorder, then transcribes the take and aligns it against
+    /// the known script text to derive real per-segment timings.
+    func stopRecordingAndAlign() {
+        guard let url = recorder.stop() else {
+            recordPhase = .failed("No recording was captured.")
+            return
+        }
+        recordAlignTask?.cancel()
+        recordPhase = .aligning(0)
+        recordAlignTask = Task {
+            do {
+                let words = try await Transcriber.timedWords(audioURL: url) { [weak self] p in
+                    Task { @MainActor in
+                        if case .aligning = self?.recordPhase {
+                            self?.recordPhase = .aligning(p)
+                        }
+                    }
+                }
+                try Task.checkCancellation()
+                let result = Aligner.align(script: project.script, words: words)
+                project.script.segments = result.segments
+                project.audioPath = url.path
+                project.globalOffset = nil
+                pause()
+                playheadVideoTime = 0
+                recordPhase = .done(matchRate: result.matchRate, audioURL: url)
+            } catch is CancellationError {
+                recordPhase = .idle
+            } catch {
+                recordPhase = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Cancels an in-flight recording/alignment and discards the partial
+    /// take. Also used as the plain "Cancel" handler before recording starts.
+    func cancelRecording() {
+        recordAlignTask?.cancel()
+        recordAlignTask = nil
+        if recorder.isRecording, let url = recorder.stop() {
+            try? FileManager.default.removeItem(at: url)
+        }
+        recordPhase = .idle
+        showRecordSheet = false
     }
 
     // MARK: - Save project

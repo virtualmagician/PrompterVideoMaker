@@ -13,6 +13,14 @@ struct PrompterApp: App {
                 .frame(minWidth: 1280, minHeight: 800)
         }
         .commands {
+            // Replaces the default "New Window" item (also Cmd+N) with our
+            // own "New Script…" so the shortcut isn't claimed twice.
+            CommandGroup(replacing: .newItem) {
+                Button("New Script…") {
+                    appState.showNewScriptSheet = true
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
             CommandGroup(after: .newItem) {
                 Button("Open…") {
                     appState.presentOpenPanel()

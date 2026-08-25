@@ -23,7 +23,62 @@ enum HeadlessRunner {
             runTranscribe(args: args)
             return true
         }
+        if args.contains("--align") {
+            runAlign(args: args)
+            return true
+        }
         return false
+    }
+
+    // MARK: - --align
+
+    /// --align --script <plain-text path> --audio <recording> --out <path.srt>
+    ///         [--granularity sentences|lines|paragraphs]
+    /// Builds a script from pasted-style text, recognizes the recording, and
+    /// aligns the known text against it to produce timed cues.
+    private static func runAlign(args: [String]) {
+        guard let scriptPath = value(for: "--script", in: args) else { fail("--align requires --script <path>") }
+        guard let audioPath = value(for: "--audio", in: args) else { fail("--align requires --audio <path>") }
+        guard let outPath = value(for: "--out", in: args) else { fail("--align requires --out <path.srt>") }
+        let granularity = value(for: "--granularity", in: args)
+            .flatMap { ScriptGranularity(rawValue: $0.capitalized) } ?? .sentences
+
+        do {
+            let text = try String(contentsOfFile: scriptPath, encoding: .utf8)
+            let script = ScriptImporter.script(fromPastedText: text, granularity: granularity)
+            guard !script.isEmpty else { fail("Script text produced no segments") }
+
+            let semaphore = DispatchSemaphore(value: 0)
+            var result: Result<[Transcriber.TimedWord], Error>?
+            Task {
+                do {
+                    let words = try await Transcriber.timedWords(audioURL: URL(fileURLWithPath: audioPath)) { p in
+                        print("progress: \(Int((p * 100).rounded()))%")
+                        fflush(stdout)
+                    }
+                    result = .success(words)
+                } catch {
+                    result = .failure(error)
+                }
+                semaphore.signal()
+            }
+            semaphore.wait()
+
+            switch result {
+            case .success(let words):
+                let aligned = Aligner.align(script: script, words: words)
+                let srt = SRTParser.serialize(aligned.segments)
+                try srt.write(toFile: outPath, atomically: true, encoding: .utf8)
+                print(String(format: "match rate: %.1f%%", aligned.matchRate * 100))
+                print("Aligned SRT written: \(outPath)")
+            case .failure(let error):
+                fail("Alignment failed: \(error.localizedDescription)")
+            case nil:
+                fail("Alignment did not complete")
+            }
+        } catch {
+            fail("Alignment failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - --export

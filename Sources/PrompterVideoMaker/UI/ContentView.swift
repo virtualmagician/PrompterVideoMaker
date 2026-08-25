@@ -25,6 +25,13 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button {
+                    appState.showNewScriptSheet = true
+                } label: {
+                    Label("New Script", systemImage: "square.and.pencil")
+                }
+                .help("New Script from Text…")
+
+                Button {
                     appState.presentOpenPanel()
                 } label: {
                     Label("Open", systemImage: "folder")
@@ -37,6 +44,14 @@ struct ContentView: View {
                     Label("Save", systemImage: "square.and.arrow.down")
                 }
                 .help("Save Project")
+                .disabled(appState.project.script.isEmpty)
+
+                Button {
+                    appState.showRecordSheet = true
+                } label: {
+                    Label("Record Timing", systemImage: "record.circle")
+                }
+                .help("Record Yourself Reading…")
                 .disabled(appState.project.script.isEmpty)
 
                 Button {
@@ -59,6 +74,12 @@ struct ContentView: View {
         }
         .sheet(isPresented: exportingBinding) {
             ExportProgressSheet()
+        }
+        .sheet(isPresented: $appState.showNewScriptSheet) {
+            NewScriptSheet()
+        }
+        .sheet(isPresented: $appState.showRecordSheet) {
+            RecordSheet(recorder: appState.recorder)
         }
         .alert("Something Went Wrong", isPresented: errorBinding) {
             Button("OK", role: .cancel) { appState.errorMessage = nil }
