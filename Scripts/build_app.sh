@@ -12,6 +12,10 @@ IDENTITY="Developer ID Application: Marco Tempest (Z3U3NKMU2Y)"
 
 echo "==> Building (release)…"
 cd "$PROJ"
+# Universal (two-arch) builds need xcbuild, which ships with full Xcode.
+if [[ -d /Applications/Xcode.app ]]; then
+    export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+fi
 if swift build -c release --arch arm64 --arch x86_64 --scratch-path "$SCRATCH" 2>/dev/null; then
     BINDIR="$SCRATCH/apple/Products/Release"
     echo "    universal binary (arm64 + x86_64)"

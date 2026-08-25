@@ -4,3 +4,4 @@ dist/
 *.mp4
 Sample_Input/
 .claude/
+Sample_Output/
