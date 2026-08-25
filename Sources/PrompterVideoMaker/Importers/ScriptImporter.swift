@@ -25,9 +25,12 @@ enum ScriptImporter {
         var t = 0.0
         for piece in pieces {
             if piece.isEmpty {
-                // Blank line in the source → zero-length spacer segment
-                // (renders as an empty line, keeps the pasted structure).
-                segments.append(Segment(text: "", start: t, end: t))
+                // Blank line in the source → spacer segment. It gets a short
+                // pause of its own so the estimated scroll rolls smoothly
+                // through the blank row instead of snapping past it.
+                let pause = 0.5
+                segments.append(Segment(text: "", start: t, end: t + pause))
+                t += pause + 0.2
                 continue
             }
             let words = piece.split(whereSeparator: { $0.isWhitespace }).count

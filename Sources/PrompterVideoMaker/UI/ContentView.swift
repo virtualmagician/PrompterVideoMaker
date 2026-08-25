@@ -51,7 +51,7 @@ struct ContentView: View {
                 .disabled(appState.project.script.isEmpty)
 
                 Button {
-                    appState.recordPaneVisible = true
+                    appState.openRecordPane()
                 } label: {
                     Label("Record Timing", systemImage: "record.circle")
                 }

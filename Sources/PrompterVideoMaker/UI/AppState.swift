@@ -358,6 +358,12 @@ final class AppState: ObservableObject {
     }
 
     func importURL(_ url: URL) {
+        // A file import replacing the script mid-take would make the later
+        // alignment map the spoken words onto unrelated text.
+        guard !recordPaneVisible else {
+            errorMessage = "Finish or cancel Record Timing before importing files."
+            return
+        }
         switch url.pathExtension.lowercased() {
         case "srt":
             pendingSRTImport = PendingSRTImport(url: url)
@@ -524,11 +530,25 @@ final class AppState: ObservableObject {
 
     /// Stops the recorder, then transcribes the take and aligns it against
     /// the known script text to derive real per-segment timings.
+    /// Opens the record pane, stopping any running preview playback first so
+    /// audio/clock don't keep running headless behind the pane.
+    func openRecordPane() {
+        pause()
+        recordPhase = .idle
+        recordPaneVisible = true
+    }
+
+    /// The recorded take between recorder.stop() and successful alignment;
+    /// deleted if the user cancels in that window. Never set for user-chosen
+    /// audio files, which must never be deleted.
+    private var pendingTakeURL: URL?
+
     func stopRecordingAndAlign() {
         guard let url = recorder.stop() else {
             recordPhase = .failed("No recording was captured.")
             return
         }
+        pendingTakeURL = url
         recordAlignTask?.cancel()
         recordPhase = .aligning(0)
         recordAlignTask = Task {
@@ -547,6 +567,7 @@ final class AppState: ObservableObject {
                 project.globalOffset = nil
                 pause()
                 playheadVideoTime = 0
+                pendingTakeURL = nil // file now owned by project.audioPath
                 recordPhase = .done(matchRate: result.matchRate, audioURL: url)
             } catch is CancellationError {
                 recordPhase = .idle
@@ -563,7 +584,11 @@ final class AppState: ObservableObject {
         recordAlignTask = nil
         if recorder.isRecording, let url = recorder.stop() {
             try? FileManager.default.removeItem(at: url)
+        } else if let url = pendingTakeURL {
+            // Cancelled between stop() and alignment finishing.
+            try? FileManager.default.removeItem(at: url)
         }
+        pendingTakeURL = nil
         recordPhase = .idle
         recordPaneVisible = false
     }

@@ -34,7 +34,9 @@ import Foundation
         let script = ScriptImporter.script(fromPastedText: "First cue.\n\n\nSecond cue.", granularity: .sentences)
         #expect(script.segments.count == 3)
         #expect(script.segments[1].text.isEmpty)
-        #expect(script.segments[1].duration < 0.01)
+        // Spacers get a short pause so the estimated scroll rolls smoothly
+        // through the blank row.
+        #expect(abs(script.segments[1].duration - 0.5) < 0.01)
         #expect(script.segments[0].text == "First cue.")
         #expect(script.segments[2].text == "Second cue.")
     }
