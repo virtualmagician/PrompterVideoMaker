@@ -83,6 +83,9 @@ struct PrompterProject: Codable, Equatable {
     var script: Script
     var style: StyleSettings
     var audioPath: String?
+    /// Net timing shift applied via the Timing controls, for display.
+    /// Optional so projects saved before this field existed still decode.
+    var globalOffset: Double?
 
     init(script: Script = Script(), style: StyleSettings = StyleSettings(), audioPath: String? = nil) {
         self.script = script

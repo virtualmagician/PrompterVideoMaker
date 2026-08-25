@@ -6,6 +6,8 @@ smooth-scrolling teleprompter videos (1920×1080 MP4) with exact timings.
 **[⬇ Download the latest release](https://github.com/virtualmagician/PrompterVideoMaker/releases/latest)** —
 signed & notarized, universal binary, macOS 15+. Unzip and double-click.
 
+![Prompter Video Maker](docs/screenshot.png)
+
 ## Features
 - Import **SRT** files (speaker prefixes like "Speaker 1:" stripped automatically)
   or **audio** (wav/mp3/m4a/aiff) transcribed **on this Mac** — no cloud, using

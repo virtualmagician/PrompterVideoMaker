@@ -253,6 +253,15 @@ final class AppState: ObservableObject {
         project.style = StyleSettings()
     }
 
+    // MARK: - Global timing offset
+
+    var globalOffset: Double { project.globalOffset ?? 0 }
+
+    func applyGlobalOffset(_ delta: Double) {
+        project.script.offsetAll(by: delta)
+        project.globalOffset = (project.globalOffset ?? 0) + delta
+    }
+
     // MARK: - Segment editing
 
     /// Inserts a blank spacer segment (renders as one empty line) after the
@@ -353,6 +362,7 @@ final class AppState: ObservableObject {
             var script = Script(segments: segments)
             script.normalize()
             project.script = script
+            project.globalOffset = nil
             selectedSegmentID = script.segments.first?.id
             pause()
             playheadVideoTime = 0
@@ -392,6 +402,7 @@ final class AppState: ObservableObject {
                 script.normalize()
                 project.script = script
                 project.audioPath = audioURL.path
+                project.globalOffset = nil
                 selectedSegmentID = script.segments.first?.id
                 pause()
                 playheadVideoTime = 0

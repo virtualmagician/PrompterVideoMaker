@@ -153,12 +153,15 @@ struct InspectorView: View {
                 Text("Global Offset")
                 Spacer()
                 Button {
-                    appState.project.script.offsetAll(by: -0.5)
+                    appState.applyGlobalOffset(-0.5)
                 } label: {
                     Text("-0.5s")
                 }
+                Text(globalOffsetLabel)
+                    .font(.body.monospacedDigit().weight(.medium))
+                    .frame(minWidth: 58)
                 Button {
-                    appState.project.script.offsetAll(by: 0.5)
+                    appState.applyGlobalOffset(0.5)
                 } label: {
                     Text("+0.5s")
                 }
@@ -167,6 +170,12 @@ struct InspectorView: View {
         } header: {
             Label("Timing", systemImage: "clock.arrow.circlepath")
         }
+    }
+
+    private var globalOffsetLabel: String {
+        let v = appState.globalOffset
+        if abs(v) < 0.001 { return "0.0s" }
+        return String(format: "%+.1fs", v)
     }
 
     // MARK: Defaults
