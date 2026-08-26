@@ -152,19 +152,49 @@ struct RecordingPane: View {
 
     // MARK: - Microphone picker
 
-    private var microphonePicker: some View {
-        Picker("Microphone", selection: Binding(
-            get: { recorder.selectedDeviceUID ?? "" },
-            set: { recorder.setDevice(uid: $0.isEmpty ? nil : $0) }
-        )) {
-            Text("System Default").tag("")
-            ForEach(availableDevices) { device in
-                Text(device.name).tag(device.uid)
-            }
+    private var currentDeviceName: String {
+        if let uid = recorder.selectedDeviceUID,
+           let device = availableDevices.first(where: { $0.uid == uid }) {
+            return device.name
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .frame(maxWidth: 260)
+        return "System Default"
+    }
+
+    /// An explicit bordered menu button (a bare `.menu` Picker is nearly
+    /// invisible on the black pane).
+    private var microphonePicker: some View {
+        Menu {
+            Button {
+                recorder.setDevice(uid: nil)
+            } label: {
+                if recorder.selectedDeviceUID == nil {
+                    Label("System Default", systemImage: "checkmark")
+                } else {
+                    Text("System Default")
+                }
+            }
+            Divider()
+            ForEach(availableDevices) { device in
+                Button {
+                    recorder.setDevice(uid: device.uid)
+                } label: {
+                    if recorder.selectedDeviceUID == device.uid {
+                        Label(device.name, systemImage: "checkmark")
+                    } else {
+                        Text(device.name)
+                    }
+                }
+            }
+        } label: {
+            Label(currentDeviceName, systemImage: "mic.fill")
+                .font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 2)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderedProminent)
+        .tint(Color(white: 0.32))
+        .foregroundStyle(.white)
+        .fixedSize()
         .disabled(isMicrophonePickerDisabled)
     }
 
