@@ -27,43 +27,50 @@ struct ContentView: View {
                 .frame(minWidth: 300, idealWidth: 320, maxWidth: 340)
         }
         .toolbar {
+            // Labeled buttons ordered by workflow: write/import a script,
+            // record its timing, save, export the video.
             ToolbarItemGroup {
                 Button {
                     appState.showNewScriptSheet = true
                 } label: {
                     Label("New Script", systemImage: "square.and.pencil")
+                        .labelStyle(.titleAndIcon)
                 }
-                .help("New Script from Text…")
+                .help("Write or paste a new script (⌘N)")
 
                 Button {
                     appState.presentOpenPanel()
                 } label: {
                     Label("Open", systemImage: "folder")
+                        .labelStyle(.titleAndIcon)
                 }
-                .help("Open SRT, Audio, or Project…")
-
-                Button {
-                    appState.saveProject()
-                } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                }
-                .help("Save Project")
-                .disabled(appState.project.script.isEmpty)
+                .help("Open an SRT, audio file, or project (⌘O)")
 
                 Button {
                     appState.openRecordPane()
                 } label: {
                     Label("Record Timing", systemImage: "record.circle")
+                        .labelStyle(.titleAndIcon)
                 }
-                .help("Record Yourself Reading…")
+                .help("Read the script aloud (or pick an audio file) to set the timings")
+                .disabled(appState.project.script.isEmpty)
+
+                Button {
+                    appState.saveProject()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Save Project (⌘S)")
                 .disabled(appState.project.script.isEmpty)
 
                 Button {
                     appState.presentExportPanel()
                 } label: {
-                    Label("Export", systemImage: "square.and.arrow.up.on.square")
+                    Label("Export Video", systemImage: "square.and.arrow.up.on.square")
+                        .labelStyle(.titleAndIcon)
                 }
-                .help("Export Video…")
+                .help("Export the teleprompter video (⌘E)")
                 .disabled(appState.composition == nil)
             }
         }
