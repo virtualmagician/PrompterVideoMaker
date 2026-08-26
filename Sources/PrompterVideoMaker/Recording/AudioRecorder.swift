@@ -67,6 +67,11 @@ final class AudioRecorder: ObservableObject {
     /// UID of the CoreAudio input device to use, or nil for the system
     /// default. Change via `setDevice(uid:)`, not directly.
     @Published private(set) var selectedDeviceUID: String?
+    /// Last monitoring failure (engine start, device switch, device loss);
+    /// nil while the meter is healthy.
+    @Published private(set) var monitorError: String?
+    /// Set when a device configuration change killed an in-progress take.
+    @Published private(set) var recordingInterrupted = false
 
     private let engine = AVAudioEngine()
     private nonisolated let fileBox = AudioFileBox()
@@ -77,9 +82,44 @@ final class AudioRecorder: ObservableObject {
     private static let levelHistoryCap = 240
     private static let deviceUIDDefaultsKey = "PVMInputDeviceUID"
 
+    private var configObserver: (any NSObjectProtocol)?
+
     init() {
         let stored = UserDefaults.standard.string(forKey: Self.deviceUIDDefaultsKey)
         selectedDeviceUID = (stored?.isEmpty ?? true) ? nil : stored
+        // A device unplug/replug stops the engine and posts this
+        // notification; rebuild the graph so the meter (and any take) never
+        // dies silently.
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleConfigurationChange() }
+        }
+    }
+
+    deinit {
+        if let configObserver {
+            NotificationCenter.default.removeObserver(configObserver)
+        }
+    }
+
+    private func handleConfigurationChange() {
+        guard isMonitoring else { return }
+        let wasRecording = isRecording
+        stopMonitoring()
+        do {
+            try startMonitoring()
+            if wasRecording {
+                monitorError = "The audio device changed — the take was interrupted."
+            }
+        } catch {
+            monitorError = error.localizedDescription
+        }
+        if wasRecording {
+            recordingInterrupted = true
+        }
     }
 
     // MARK: - Device enumeration
@@ -188,11 +228,14 @@ final class AudioRecorder: ObservableObject {
             UserDefaults.standard.removeObject(forKey: Self.deviceUIDDefaultsKey)
         }
 
-        guard isMonitoring else { return }
+        // Restart whenever the pane wants a live meter — including after a
+        // previous failure, so picking a working device revives it.
+        guard isMonitoring || monitorError != nil else { return }
         stopMonitoring()
         do {
             try startMonitoring()
         } catch {
+            monitorError = error.localizedDescription
             audioRecorderLog.error("Failed to restart monitoring after device change: \(error.localizedDescription, privacy: .public)")
         }
     }
@@ -248,6 +291,7 @@ final class AudioRecorder: ObservableObject {
         }
 
         isMonitoring = true
+        monitorError = nil
     }
 
     /// Full teardown: removes the tap, stops the engine, clears the meter.
@@ -325,6 +369,7 @@ final class AudioRecorder: ObservableObject {
 
         fileBox.set(file)
         recordingURL = url
+        recordingInterrupted = false
         isRecording = true
         elapsed = 0
         startDate = Date()

@@ -609,6 +609,7 @@ final class AppState: ObservableObject {
         recordPaneVisible = false
         project = PrompterProject(style: AppState.loadDefaultStyle())
         projectFileURL = nil
+        UserDefaults.standard.removeObject(forKey: Self.lastProjectKey)
         selectedSegmentID = nil
         playheadVideoTime = 0
         wordSelection = nil

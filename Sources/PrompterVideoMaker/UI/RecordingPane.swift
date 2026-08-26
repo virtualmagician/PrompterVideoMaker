@@ -43,6 +43,13 @@ struct RecordingPane: View {
             availableDevices = AudioRecorder.availableInputDevices()
             startMonitoringIfNeeded()
         }
+        .onChange(of: recorder.recordingInterrupted) { _, interrupted in
+            guard interrupted else { return }
+            if case .recording = appState.recordPhase {
+                appState.recordPhase = .failed(
+                    "The audio device changed and the take was stopped. Check the microphone and record again.")
+            }
+        }
         .onDisappear {
             recorder.stopMonitoring()
         }
@@ -127,7 +134,7 @@ struct RecordingPane: View {
                 Text("Speak \u{2014} the meter should move when your mic hears you.")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.6))
-                if let monitorError {
+                if let monitorError = recorder.monitorError ?? monitorError {
                     Text(monitorError)
                         .font(.caption)
                         .foregroundStyle(.orange)
