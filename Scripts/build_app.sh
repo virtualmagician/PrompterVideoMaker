@@ -47,6 +47,7 @@ iconutil -c icns "$ICONDIR" -o "$APP/Contents/Resources/AppIcon.icns"
 
 echo "==> Codesigning (Developer ID, hardened runtime)…"
 codesign --force --options runtime --timestamp \
+    --entitlements "$PROJ/Resources/PrompterVideoMaker.entitlements" \
     --sign "$IDENTITY" "$APP"
 codesign --verify --strict --verbose=2 "$APP"
 
