@@ -217,11 +217,13 @@ final class RibbonLayout {
         let ribbonY = canvasPoint.y + scrollOffset
         var best: Line?
         var bestDist = CGFloat.greatestFiniteMagnitude
-        for line in lines {
+        // Spacer (empty) lines can be shorter than lineHeight and must never
+        // shadow an adjacent text line, so only selectable lines compete.
+        for line in lines where line.range.length > 0 {
             let d = abs(line.centerY - ribbonY)
             if d < bestDist { bestDist = d; best = line }
         }
-        guard let line = best, bestDist <= style.lineHeight / 2, line.range.length > 0 else { return nil }
+        guard let line = best, bestDist <= style.lineHeight / 2 else { return nil }
         let x0 = xOrigin(of: line, style: style)
         let relX = canvasPoint.x - x0
         let lineWidth = CGFloat(CTLineGetTypographicBounds(line.ctLine, nil, nil, nil))

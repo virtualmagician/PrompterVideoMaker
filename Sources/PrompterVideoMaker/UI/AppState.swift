@@ -46,6 +46,9 @@ struct WordSelection: Equatable {
     var segmentIndex: Int
     /// UTF-16 range in the segment's PLAIN (marker-free) text.
     var plainRange: Range<Int>
+    /// The plain text at selection time; edits elsewhere invalidate the
+    /// selection instead of formatting the wrong characters.
+    var plainText: String
 }
 
 private extension UTType {
@@ -223,12 +226,15 @@ final class AppState: ObservableObject {
               let hit = comp.hitTestWord(canvasPoint: canvasPoint, atVideoTime: playheadVideoTime),
               hit.segmentIndex < project.script.segments.count else { return false }
         let segID = project.script.segments[hit.segmentIndex].id
-        if extend, var sel = wordSelection, sel.segmentID == segID {
+        let plain = EmphasisMarkup.strip(project.script.segments[hit.segmentIndex].text)
+        if extend, var sel = wordSelection, sel.segmentID == segID, sel.plainText == plain {
             sel.plainRange = min(sel.plainRange.lowerBound, hit.plainRange.lowerBound)
                 ..< max(sel.plainRange.upperBound, hit.plainRange.upperBound)
             wordSelection = sel
         } else {
-            wordSelection = WordSelection(segmentID: segID, segmentIndex: hit.segmentIndex, plainRange: hit.plainRange)
+            wordSelection = WordSelection(
+                segmentID: segID, segmentIndex: hit.segmentIndex,
+                plainRange: hit.plainRange, plainText: plain)
         }
         return true
     }
@@ -237,7 +243,9 @@ final class AppState: ObservableObject {
     var selectionHighlightRects: [CGRect] {
         guard let sel = wordSelection, let comp = composition,
               sel.segmentIndex < project.script.segments.count,
-              project.script.segments[sel.segmentIndex].id == sel.segmentID else { return [] }
+              project.script.segments[sel.segmentIndex].id == sel.segmentID,
+              EmphasisMarkup.strip(project.script.segments[sel.segmentIndex].text) == sel.plainText
+        else { return [] }
         return comp.highlightRects(segmentIndex: sel.segmentIndex, plainRange: sel.plainRange, atVideoTime: playheadVideoTime)
     }
 
@@ -247,6 +255,12 @@ final class AppState: ObservableObject {
     func toggleFormat(_ attribute: EmphasisMarkup.Attribute) {
         guard let sel = wordSelection,
               let i = project.script.segments.firstIndex(where: { $0.id == sel.segmentID }) else { return }
+        // The text may have been edited elsewhere since selection; formatting
+        // a stale range would hit the wrong characters.
+        guard EmphasisMarkup.strip(project.script.segments[i].text) == sel.plainText else {
+            wordSelection = nil
+            return
+        }
         project.script.segments[i].text = EmphasisMarkup.toggle(
             attribute, in: project.script.segments[i].text, plainRange: sel.plainRange)
     }
@@ -257,35 +271,77 @@ final class AppState: ObservableObject {
 
     private static let minCueDuration = 0.1
 
+    /// Spacer (empty-text) segments never constrain timing edits; clamping is
+    /// against the nearest REAL neighbor, and any spacers passed over are
+    /// re-anchored so segment order stays intact.
+    private func isSpacer(_ s: Segment) -> Bool {
+        s.text.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func realPrevEnd(before i: Int) -> Double {
+        project.script.segments[..<i].last(where: { !isSpacer($0) })?.end ?? 0
+    }
+
+    private func realNextStart(after i: Int) -> Double {
+        project.script.segments[(i + 1)...].first(where: { !isSpacer($0) })?.start
+            ?? .greatestFiniteMagnitude
+    }
+
+    /// Keeps spacers between `i` and its real neighbors inside the gaps after
+    /// segment `i`'s times changed.
+    private func reanchorSpacers(around i: Int) {
+        let segs = project.script.segments
+        let start = segs[i].start
+        let end = segs[i].end
+        var k = i - 1
+        while k >= 0, isSpacer(segs[k]) {
+            let cap = min(project.script.segments[k].start, start)
+            project.script.segments[k].start = cap
+            project.script.segments[k].end = min(project.script.segments[k].end, start)
+            if project.script.segments[k].end < project.script.segments[k].start {
+                project.script.segments[k].end = project.script.segments[k].start
+            }
+            k -= 1
+        }
+        k = i + 1
+        while k < segs.count, isSpacer(segs[k]) {
+            let floorT = max(project.script.segments[k].start, end)
+            project.script.segments[k].start = floorT
+            if project.script.segments[k].end < floorT {
+                project.script.segments[k].end = floorT
+            }
+            k += 1
+        }
+    }
+
     func setStart(_ id: UUID, to value: Double) {
         guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
-        let prevEnd = i > 0 ? project.script.segments[i - 1].end : 0
+        let prevEnd = realPrevEnd(before: i)
         let upper = project.script.segments[i].end - Self.minCueDuration
         project.script.segments[i].start = min(max(value, prevEnd), max(prevEnd, upper))
+        reanchorSpacers(around: i)
     }
 
     func setEnd(_ id: UUID, to value: Double) {
         guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
         let seg = project.script.segments[i]
-        let nextStart = i + 1 < project.script.segments.count
-            ? project.script.segments[i + 1].start
-            : Double.greatestFiniteMagnitude
+        let nextStart = realNextStart(after: i)
         project.script.segments[i].end = max(seg.start + Self.minCueDuration, min(value, nextStart))
+        reanchorSpacers(around: i)
     }
 
-    /// Shifts a whole cue in time, clamped between its neighbors.
+    /// Shifts a whole cue in time, clamped between its real neighbors.
     func moveSegment(_ id: UUID, by delta: Double) {
         guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
         let seg = project.script.segments[i]
-        let prevEnd = i > 0 ? project.script.segments[i - 1].end : 0
-        let nextStart = i + 1 < project.script.segments.count
-            ? project.script.segments[i + 1].start
-            : Double.greatestFiniteMagnitude
+        let prevEnd = realPrevEnd(before: i)
+        let nextStart = realNextStart(after: i)
         let hi = nextStart - seg.duration
         let newStart = min(max(seg.start + delta, prevEnd), max(prevEnd, hi))
         let d = newStart - seg.start
         project.script.segments[i].start += d
         project.script.segments[i].end += d
+        reanchorSpacers(around: i)
     }
 
     /// Open panel for "align an audio file to the current script" — timings
@@ -406,16 +462,30 @@ final class AppState: ObservableObject {
     func splitInHalf(_ id: UUID) {
         guard let seg = project.script.segments.first(where: { $0.id == id }) else { return }
         project.script.split(segmentID: id, atTextIndex: seg.text.count / 2)
+        invalidateStaleWordSelection()
     }
 
     func mergeWithNext(_ id: UUID) {
         project.script.mergeWithNext(segmentID: id)
+        invalidateStaleWordSelection()
     }
 
     func deleteSegment(_ id: UUID) {
         project.script.segments.removeAll { $0.id == id }
         project.script.normalize()
         if selectedSegmentID == id { selectedSegmentID = nil }
+        invalidateStaleWordSelection()
+    }
+
+    /// Drops the preview word selection when its segment vanished or its text
+    /// no longer matches the selection snapshot.
+    private func invalidateStaleWordSelection() {
+        guard let sel = wordSelection else { return }
+        guard let seg = project.script.segments.first(where: { $0.id == sel.segmentID }),
+              EmphasisMarkup.strip(seg.text) == sel.plainText else {
+            wordSelection = nil
+            return
+        }
     }
 
     func nudgeStart(_ id: UUID, by delta: Double) {
