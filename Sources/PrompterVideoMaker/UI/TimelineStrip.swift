@@ -32,7 +32,9 @@ struct TimelineStrip: View {
 
     private let edgeHitWidth: CGFloat = 7
     private let rulerHeight: CGFloat = 14
-    private let stripHeight: CGFloat = 64
+    /// Taller when the audio waveform track is shown.
+    private var stripHeight: CGFloat { appState.audioWaveform == nil ? 64 : 100 }
+    private var waveLaneHeight: CGFloat { appState.audioWaveform == nil ? 0 : 32 }
 
     private struct Entry: Identifiable {
         let id: UUID
@@ -68,7 +70,7 @@ struct TimelineStrip: View {
     private func canvas(width: CGFloat, height: CGFloat) -> some View {
         let windowStart = effectiveWindowStart
         let blocksTop = rulerHeight
-        let blocksHeight = max(height - rulerHeight, 0)
+        let blocksHeight = max(height - rulerHeight - waveLaneHeight, 0)
 
         ZStack(alignment: .topLeading) {
             // Empty-strip background: click seeks the playhead. Sits behind
@@ -96,6 +98,13 @@ struct TimelineStrip: View {
                     blocksTop: blocksTop,
                     blocksHeight: blocksHeight
                 )
+            }
+
+            if let wave = appState.audioWaveform {
+                waveformLane(wave: wave, windowStart: windowStart, width: width)
+                    .frame(width: width, height: waveLaneHeight)
+                    .offset(y: height - waveLaneHeight)
+                    .allowsHitTesting(false)
             }
 
             playheadLine(windowStart: windowStart, width: width, height: height)
@@ -243,6 +252,36 @@ struct TimelineStrip: View {
                 }
                 activeDrag = nil
             }
+    }
+
+    // MARK: - Audio waveform track
+
+    /// The project audio's peak envelope, time-aligned with the cue blocks —
+    /// speech energy under the blocks makes boundary adjustments obvious.
+    private func waveformLane(wave: AudioWaveform, windowStart: Double, width: CGFloat) -> some View {
+        Canvas { context, size in
+            let pps = width / CGFloat(windowSpan)
+            guard pps > 0 else { return }
+            let mid = size.height / 2
+            let step: CGFloat = 2
+            var bars = Path()
+            var x: CGFloat = 0
+            while x < size.width {
+                let t0 = windowStart + Double(x / pps)
+                let t1 = windowStart + Double((x + step) / pps)
+                let peak = CGFloat(wave.peak(from: t0, to: t1))
+                if peak > 0 {
+                    let h = max(1.5, peak * (size.height - 4))
+                    bars.addRect(CGRect(x: x, y: mid - h / 2, width: step * 0.7, height: h))
+                }
+                x += step
+            }
+            context.fill(bars, with: .color(.green.opacity(0.5)))
+            var separator = Path()
+            separator.move(to: CGPoint(x: 0, y: 0.5))
+            separator.addLine(to: CGPoint(x: size.width, y: 0.5))
+            context.stroke(separator, with: .color(.secondary.opacity(0.25)), lineWidth: 1)
+        }
     }
 
     // MARK: - Playhead

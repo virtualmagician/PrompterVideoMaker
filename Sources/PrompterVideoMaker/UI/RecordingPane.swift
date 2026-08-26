@@ -9,20 +9,53 @@ import UniformTypeIdentifiers
 /// actually re-renders on the recorder's own `@Published` changes
 /// (elapsed/level), which a nested object wouldn't otherwise forward through
 /// `AppState`'s `objectWillChange`.
+///
+/// Monitoring (the live meter/waveform) starts the moment this view appears
+/// — not just while actually recording — so the user can see their mic is
+/// working before they commit to a take. Because `ContentView` only
+/// instantiates `RecordingPane` while `appState.recordPaneVisible` is true,
+/// `onAppear`/`onDisappear` here fire exactly when the pane opens/closes
+/// (including every path that flips `recordPaneVisible` off: Close, Cancel,
+/// New Project), so a single `onDisappear` teardown is sufficient — no
+/// `AppState` changes were needed for this feature.
 struct RecordingPane: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject var recorder: AudioRecorder
+
+    @State private var availableDevices: [AudioInputDevice] = []
+    @State private var monitorError: String?
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             readView
+            if showsMeterStrip {
+                Divider()
+                meterStrip
+            }
             Divider()
             controlBar
         }
         .background(Color.black)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            availableDevices = AudioRecorder.availableInputDevices()
+            startMonitoringIfNeeded()
+        }
+        .onDisappear {
+            recorder.stopMonitoring()
+        }
+    }
+
+    private func startMonitoringIfNeeded() {
+        guard !recorder.isMonitoring else { return }
+        do {
+            try recorder.startMonitoring()
+            monitorError = nil
+        } catch {
+            monitorError = error.localizedDescription
+        }
     }
 
     // MARK: - Header
@@ -73,6 +106,68 @@ struct RecordingPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    // MARK: - Meter strip (live waveform + level, idle & recording only)
+
+    private var showsMeterStrip: Bool {
+        switch appState.recordPhase {
+        case .idle, .recording: return true
+        case .aligning, .done, .failed: return false
+        }
+    }
+
+    private var meterStrip: some View {
+        VStack(spacing: 8) {
+            WaveformView(history: recorder.levelHistory)
+                .frame(height: 44)
+                .frame(maxWidth: 560)
+            LevelMeterView(level: recorder.level)
+                .frame(height: 8)
+                .frame(maxWidth: 560)
+            if case .idle = appState.recordPhase {
+                Text("Speak \u{2014} the meter should move when your mic hears you.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+                if let monitorError {
+                    Text(monitorError)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 460)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity)
+        .background(Color.black)
+    }
+
+    // MARK: - Microphone picker
+
+    private var microphonePicker: some View {
+        Picker("Microphone", selection: Binding(
+            get: { recorder.selectedDeviceUID ?? "" },
+            set: { recorder.setDevice(uid: $0.isEmpty ? nil : $0) }
+        )) {
+            Text("System Default").tag("")
+            ForEach(availableDevices) { device in
+                Text(device.name).tag(device.uid)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .frame(maxWidth: 260)
+        .disabled(isMicrophonePickerDisabled)
+    }
+
+    private var isMicrophonePickerDisabled: Bool {
+        switch appState.recordPhase {
+        case .recording, .aligning: return true
+        case .idle, .done, .failed: return false
+        }
+    }
+
     // MARK: - Control bar
 
     @ViewBuilder
@@ -93,6 +188,15 @@ struct RecordingPane: View {
 
     private var idleBar: some View {
         VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Text("Microphone:")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                microphonePicker
+                Spacer()
+            }
+            .frame(maxWidth: 560)
+
             HStack(spacing: 16) {
                 Button {
                     appState.startRecording()
@@ -137,10 +241,7 @@ struct RecordingPane: View {
                     .font(.body.monospacedDigit().weight(.medium))
                     .foregroundStyle(.white)
                     .frame(width: 52, alignment: .leading)
-                LevelMeterView(level: recorder.level)
-                    .frame(height: 8)
             }
-            .padding(.horizontal, 40)
 
             Button {
                 appState.stopRecordingAndAlign()
@@ -245,5 +346,42 @@ private struct LevelMeterView: View {
                     .animation(.easeOut(duration: 0.08), value: level)
             }
         }
+    }
+}
+
+/// Scrolling waveform strip: `history` (oldest first) is drawn as mirrored
+/// vertical bars around the centerline, newest sample pinned to the right
+/// edge, matching a live scope.
+private struct WaveformView: View {
+    let history: [Float]
+
+    var body: some View {
+        Canvas { context, size in
+            let midY = size.height / 2
+
+            var centerline = Path()
+            centerline.move(to: CGPoint(x: 0, y: midY))
+            centerline.addLine(to: CGPoint(x: size.width, y: midY))
+            context.stroke(centerline, with: .color(.white.opacity(0.15)), lineWidth: 1)
+
+            guard !history.isEmpty else { return }
+
+            let barWidth: CGFloat = 3
+            let spacing: CGFloat = 2
+            let slot = barWidth + spacing
+            let maxBars = max(1, Int(size.width / slot))
+            let visible = history.suffix(maxBars)
+            let startX = size.width - CGFloat(visible.count) * slot
+
+            for (index, sample) in visible.enumerated() {
+                let amplitude = CGFloat(min(1, max(0, sample)))
+                let barHeight = max(1.5, amplitude * midY)
+                let x = startX + CGFloat(index) * slot
+                let rect = CGRect(x: x, y: midY - barHeight, width: barWidth, height: barHeight * 2)
+                context.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2), with: .color(.green.opacity(0.85)))
+            }
+        }
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }

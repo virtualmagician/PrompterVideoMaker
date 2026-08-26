@@ -67,6 +67,8 @@ final class AppState: ObservableObject {
     @Published var isPlaying: Bool = false
 
     @Published private(set) var composition: PrompterComposition?
+    /// Peak envelope of the project audio, shown as the timeline's second track.
+    @Published private(set) var audioWaveform: AudioWaveform?
 
     @Published var pendingSRTImport: PendingSRTImport?
     @Published var transcribePhase: TranscribePhase = .idle
@@ -90,6 +92,7 @@ final class AppState: ObservableObject {
     private var lastLoadedAudioPath: String?
 
     private var cancellables = Set<AnyCancellable>()
+    private var waveformTask: Task<Void, Never>?
     private var transcribeTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
     private var recordAlignTask: Task<Void, Never>?
@@ -133,16 +136,27 @@ final class AppState: ObservableObject {
         lastLoadedAudioPath = project.audioPath
         audioPlayer?.stop()
         audioPlayer = nil
+        waveformTask?.cancel()
+        audioWaveform = nil
         guard let path = project.audioPath else { return }
         let url = URL(fileURLWithPath: path)
         audioPlayer = try? AVAudioPlayer(contentsOf: url)
         audioPlayer?.prepareToPlay()
+        waveformTask = Task { [weak self] in
+            let wave = try? await Task.detached(priority: .utility) {
+                try AudioWaveform.compute(url: url)
+            }.value
+            guard let self, !Task.isCancelled, self.project.audioPath == path else { return }
+            self.audioWaveform = wave
+        }
     }
 
     private func teardownAudioPlayer() {
         audioPlayer?.stop()
         audioPlayer = nil
         lastLoadedAudioPath = nil
+        waveformTask?.cancel()
+        audioWaveform = nil
     }
 
     // MARK: - Playback
