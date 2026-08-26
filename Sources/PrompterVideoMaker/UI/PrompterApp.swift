@@ -61,6 +61,11 @@ struct PrompterApp: App {
             // Replaces the default "New Window" item (also Cmd+N) with our
             // own "New Script…" so the shortcut isn't claimed twice.
             CommandGroup(replacing: .newItem) {
+                Button("New Project") {
+                    appState.newProject()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+
                 Button("New Script…") {
                     appState.showNewScriptSheet = true
                 }
@@ -85,6 +90,12 @@ struct PrompterApp: App {
                     appState.saveProject()
                 }
                 .keyboardShortcut("s", modifiers: .command)
+                .disabled(appState.project.script.isEmpty)
+
+                Button("Save Project As…") {
+                    appState.presentSaveProjectPanel()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(appState.project.script.isEmpty)
 
                 Divider()

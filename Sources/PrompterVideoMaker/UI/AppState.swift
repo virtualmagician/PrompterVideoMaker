@@ -577,6 +577,29 @@ final class AppState: ObservableObject {
         pendingSRTImport = nil
     }
 
+    /// Resets to a fresh, empty project (keeping the user's saved default
+    /// style), confirming first when a script is loaded.
+    func newProject() {
+        if !project.script.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Start a New Project?"
+            alert.informativeText = "The current script and settings will be replaced. Save the project first if you want to keep them."
+            alert.addButton(withTitle: "New Project")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        pause()
+        cancelRecording()
+        cancelTranscription()
+        cancelEmphasis()
+        recordPaneVisible = false
+        project = PrompterProject(style: AppState.loadDefaultStyle())
+        projectFileURL = nil
+        selectedSegmentID = nil
+        playheadVideoTime = 0
+        wordSelection = nil
+    }
+
     func openProject(url: URL) {
         do {
             let proj = try PrompterProject.load(from: url)
