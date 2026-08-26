@@ -7,6 +7,14 @@ import os.log
 
 private let audioRecorderLog = Logger(subsystem: "com.marcotempest.PrompterVideoMaker", category: "audio")
 
+/// The live meter values, isolated from AudioRecorder's slow state.
+@MainActor
+final class AudioMeter: ObservableObject {
+    @Published fileprivate(set) var level: Float = 0
+    @Published fileprivate(set) var levelHistory: [Float] = []
+    @Published fileprivate(set) var elapsed: TimeInterval = 0
+}
+
 enum AudioRecorderError: LocalizedError {
     case engineStartFailed(underlying: Error)
     case fileCreateFailed(underlying: Error)
@@ -59,11 +67,12 @@ private final class AudioFileBox: @unchecked Sendable {
 final class AudioRecorder: ObservableObject {
     @Published private(set) var isRecording: Bool = false
     @Published private(set) var isMonitoring: Bool = false
-    @Published private(set) var elapsed: TimeInterval = 0
-    @Published private(set) var level: Float = 0
+    /// High-frequency meter values live on their own ObservableObject so
+    /// only the small meter views re-render 20x/sec — re-rendering the whole
+    /// Record pane at that rate destabilizes open menus (observed SEGV in
+    /// SwiftUI's MenuItemCallback when the pane thrashes under an open menu).
+    let meter = AudioMeter()
     /// Ring buffer of recent smoothed levels, oldest first, capped at
-    /// `levelHistoryCap` samples, for drawing a scrolling waveform strip.
-    @Published private(set) var levelHistory: [Float] = []
     /// UID of the CoreAudio input device to use, or nil for the system
     /// default. Change via `setDevice(uid:)`, not directly.
     @Published private(set) var selectedDeviceUID: String?
@@ -273,11 +282,11 @@ final class AudioRecorder: ObservableObject {
             let rms = Self.rms(of: buffer)
             Task { @MainActor in
                 guard let self else { return }
-                let smoothed = self.level * 0.7 + min(1, max(0, rms * 6)) * 0.3
-                self.level = smoothed
-                self.levelHistory.append(smoothed)
-                if self.levelHistory.count > Self.levelHistoryCap {
-                    self.levelHistory.removeFirst(self.levelHistory.count - Self.levelHistoryCap)
+                let smoothed = self.meter.level * 0.7 + min(1, max(0, rms * 6)) * 0.3
+                self.meter.level = smoothed
+                self.meter.levelHistory.append(smoothed)
+                if self.meter.levelHistory.count > Self.levelHistoryCap {
+                    self.meter.levelHistory.removeFirst(self.meter.levelHistory.count - Self.levelHistoryCap)
                 }
             }
         }
@@ -305,8 +314,8 @@ final class AudioRecorder: ObservableObject {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isMonitoring = false
-        level = 0
-        levelHistory.removeAll()
+        meter.level = 0
+        meter.levelHistory.removeAll()
     }
 
     // MARK: - Recording (adds a file on top of monitoring)
@@ -371,14 +380,14 @@ final class AudioRecorder: ObservableObject {
         recordingURL = url
         recordingInterrupted = false
         isRecording = true
-        elapsed = 0
+        meter.elapsed = 0
         startDate = Date()
 
         elapsedTimer?.invalidate()
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let start = self.startDate else { return }
-                self.elapsed = Date().timeIntervalSince(start)
+                self.meter.elapsed = Date().timeIntervalSince(start)
             }
         }
         RunLoop.main.add(timer, forMode: .common)

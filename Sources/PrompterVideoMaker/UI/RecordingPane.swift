@@ -124,12 +124,7 @@ struct RecordingPane: View {
 
     private var meterStrip: some View {
         VStack(spacing: 8) {
-            WaveformView(history: recorder.levelHistory)
-                .frame(height: 44)
-                .frame(maxWidth: 560)
-            LevelMeterView(level: recorder.level)
-                .frame(height: 8)
-                .frame(maxWidth: 560)
+            LiveMeterViews(meter: recorder.meter)
             if case .idle = appState.recordPhase {
                 Text("Speak \u{2014} the meter should move when your mic hears you.")
                     .font(.caption)
@@ -274,7 +269,7 @@ struct RecordingPane: View {
                 Circle()
                     .fill(Color.red)
                     .frame(width: 10, height: 10)
-                Text(formatElapsed(recorder.elapsed))
+                ElapsedText(meter: recorder.meter)
                     .font(.body.monospacedDigit().weight(.medium))
                     .foregroundStyle(.white)
                     .frame(width: 52, alignment: .leading)
@@ -420,5 +415,34 @@ private struct WaveformView: View {
         }
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+
+/// Observes only the high-frequency meter, so 20 Hz level updates re-render
+/// just these small views — never the whole pane (menus stay stable).
+private struct LiveMeterViews: View {
+    @ObservedObject var meter: AudioMeter
+
+    var body: some View {
+        VStack(spacing: 8) {
+            WaveformView(history: meter.levelHistory)
+                .frame(height: 44)
+                .frame(maxWidth: 560)
+            LevelMeterView(level: meter.level)
+                .frame(height: 8)
+                .frame(maxWidth: 560)
+        }
+    }
+}
+
+private struct ElapsedText: View {
+    @ObservedObject var meter: AudioMeter
+
+    var body: some View {
+        let total = Int(meter.elapsed.rounded(.down))
+        Text(String(format: "%d:%02d", total / 60, total % 60))
+            .font(.body.monospacedDigit().weight(.medium))
+            .foregroundStyle(.white)
     }
 }
