@@ -40,6 +40,14 @@ enum RecordPhase: Equatable {
     case failed(String)
 }
 
+/// Words selected by clicking/dragging in the preview, for formatting.
+struct WordSelection: Equatable {
+    var segmentID: UUID
+    var segmentIndex: Int
+    /// UTF-16 range in the segment's PLAIN (marker-free) text.
+    var plainRange: Range<Int>
+}
+
 private extension UTType {
     static var srtSubtitle: UTType { UTType(filenameExtension: "srt") ?? .plainText }
     static var prompterProject: UTType { UTType(filenameExtension: "prompterproj") ?? .json }
@@ -63,6 +71,7 @@ final class AppState: ObservableObject {
     @Published var emphasisPhase: EmphasisPhase = .idle
     @Published var errorMessage: String?
 
+    @Published var wordSelection: WordSelection?
     @Published var recordPhase: RecordPhase = .idle
     @Published var showNewScriptSheet = false
     @Published var recordPaneVisible = false
@@ -143,6 +152,7 @@ final class AppState: ObservableObject {
         playStartVideoTime = playheadVideoTime
         playStartDate = Date()
         isPlaying = true
+        wordSelection = nil
         syncAudioIfNeeded()
     }
 
@@ -201,6 +211,81 @@ final class AppState: ObservableObject {
         guard let comp = composition else { return }
         let current = comp.scrollOffset(atVideoTime: playheadVideoTime)
         seek(to: comp.videoTime(forScrollOffset: current + delta))
+    }
+
+    // MARK: - In-preview word selection & formatting
+
+    /// Click/drag handler from the preview (canvas coords, top-down 1920x1080).
+    /// Returns true when a word was hit (selection set or extended); false
+    /// means the click landed on empty background.
+    func previewClick(canvasPoint: CGPoint, extend: Bool) -> Bool {
+        guard let comp = composition,
+              let hit = comp.hitTestWord(canvasPoint: canvasPoint, atVideoTime: playheadVideoTime),
+              hit.segmentIndex < project.script.segments.count else { return false }
+        let segID = project.script.segments[hit.segmentIndex].id
+        if extend, var sel = wordSelection, sel.segmentID == segID {
+            sel.plainRange = min(sel.plainRange.lowerBound, hit.plainRange.lowerBound)
+                ..< max(sel.plainRange.upperBound, hit.plainRange.upperBound)
+            wordSelection = sel
+        } else {
+            wordSelection = WordSelection(segmentID: segID, segmentIndex: hit.segmentIndex, plainRange: hit.plainRange)
+        }
+        return true
+    }
+
+    /// Canvas-space highlight boxes for the current selection at the playhead.
+    var selectionHighlightRects: [CGRect] {
+        guard let sel = wordSelection, let comp = composition,
+              sel.segmentIndex < project.script.segments.count,
+              project.script.segments[sel.segmentIndex].id == sel.segmentID else { return [] }
+        return comp.highlightRects(segmentIndex: sel.segmentIndex, plainRange: sel.plainRange, atVideoTime: playheadVideoTime)
+    }
+
+    /// Toggles bold/italic/underline/accent on the selected words. The
+    /// selection stays valid afterwards (plain text is unchanged), so formats
+    /// can be stacked.
+    func toggleFormat(_ attribute: EmphasisMarkup.Attribute) {
+        guard let sel = wordSelection,
+              let i = project.script.segments.firstIndex(where: { $0.id == sel.segmentID }) else { return }
+        project.script.segments[i].text = EmphasisMarkup.toggle(
+            attribute, in: project.script.segments[i].text, plainRange: sel.plainRange)
+    }
+
+    func clearWordSelection() { wordSelection = nil }
+
+    // MARK: - Clamped timing edits (no overlaps possible)
+
+    private static let minCueDuration = 0.1
+
+    func setStart(_ id: UUID, to value: Double) {
+        guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
+        let prevEnd = i > 0 ? project.script.segments[i - 1].end : 0
+        let upper = project.script.segments[i].end - Self.minCueDuration
+        project.script.segments[i].start = min(max(value, prevEnd), max(prevEnd, upper))
+    }
+
+    func setEnd(_ id: UUID, to value: Double) {
+        guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
+        let seg = project.script.segments[i]
+        let nextStart = i + 1 < project.script.segments.count
+            ? project.script.segments[i + 1].start
+            : Double.greatestFiniteMagnitude
+        project.script.segments[i].end = max(seg.start + Self.minCueDuration, min(value, nextStart))
+    }
+
+    /// Shifts a whole cue in time, clamped between its neighbors.
+    func moveSegment(_ id: UUID, by delta: Double) {
+        guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
+        let seg = project.script.segments[i]
+        let prevEnd = i > 0 ? project.script.segments[i - 1].end : 0
+        let nextStart = i + 1 < project.script.segments.count
+            ? project.script.segments[i + 1].start
+            : Double.greatestFiniteMagnitude
+        let hi = nextStart - seg.duration
+        let newStart = min(max(seg.start + delta, prevEnd), max(prevEnd, hi))
+        let d = newStart - seg.start
+        project.script.segments[i].start += d
+        project.script.segments[i].end += d
     }
 
     /// Open panel for "align an audio file to the current script" — timings
@@ -334,15 +419,13 @@ final class AppState: ObservableObject {
     }
 
     func nudgeStart(_ id: UUID, by delta: Double) {
-        guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
-        project.script.segments[i].start = max(0, project.script.segments[i].start + delta)
-        project.script.normalize()
+        guard let seg = project.script.segments.first(where: { $0.id == id }) else { return }
+        setStart(id, to: seg.start + delta)
     }
 
     func nudgeEnd(_ id: UUID, by delta: Double) {
-        guard let i = project.script.segments.firstIndex(where: { $0.id == id }) else { return }
-        let seg = project.script.segments[i]
-        project.script.segments[i].end = max(seg.start, seg.end + delta)
+        guard let seg = project.script.segments.first(where: { $0.id == id }) else { return }
+        setEnd(id, to: seg.end + delta)
     }
 
     // MARK: - Import routing

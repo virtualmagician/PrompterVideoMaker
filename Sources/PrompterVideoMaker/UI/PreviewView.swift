@@ -6,6 +6,17 @@ import SwiftUI
 struct PreviewView: View {
     @EnvironmentObject private var appState: AppState
 
+    /// Size of the aspect-locked preview box, used to convert view points
+    /// into canvas (1920x1080) coordinates for hit-testing and to scale the
+    /// selection overlay back down into view space.
+    @State private var boxSize: CGSize = .zero
+
+    // Per-gesture scratch state (reset on each new drag).
+    @State private var dragIsActive = false
+    @State private var dragWasPlayingAtStart = false
+    @State private var dragHadSelectionAtStart = false
+    @State private var dragHitWord = false
+
     var body: some View {
         // The visible pane is locked to the video's exact 16:9 aspect, so
         // what you see is precisely the exported frame — no extra background
@@ -38,12 +49,139 @@ struct PreviewView: View {
         .background(ScrollWheelCatcher { ribbonDelta in
             appState.scrubByRibbonPixels(ribbonDelta)
         })
+        .overlay(selectionHighlightOverlay)
+        .overlay(alignment: .top) { formatBar }
         .clipped()
         .shadow(color: .black.opacity(0.4), radius: 24)
+        .contentShape(Rectangle())
+        .onGeometryChange(for: CGSize.self, of: { $0.size }) { boxSize = $0 }
+        .gesture(previewDragGesture)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(16)
-        .contentShape(Rectangle())
-        .onTapGesture { appState.togglePlay() }
+    }
+
+    // MARK: - Click / drag word selection
+
+    /// Converts a point in the preview box's own coordinate space into
+    /// canvas (1920x1080, top-down) coordinates.
+    private func canvasPoint(from viewPoint: CGPoint) -> CGPoint? {
+        guard boxSize.width > 0 else { return nil }
+        let scale = StyleSettings.canvasWidth / boxSize.width
+        return CGPoint(x: viewPoint.x * scale, y: viewPoint.y * scale)
+    }
+
+    private var previewDragGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if !dragIsActive {
+                    // Gesture start.
+                    dragIsActive = true
+                    dragWasPlayingAtStart = appState.isPlaying
+                    dragHadSelectionAtStart = appState.wordSelection != nil
+                    dragHitWord = false
+                    guard !dragWasPlayingAtStart else { return }
+                    if let point = canvasPoint(from: value.location) {
+                        dragHitWord = appState.previewClick(canvasPoint: point, extend: false)
+                    }
+                } else {
+                    guard !dragWasPlayingAtStart else { return }
+                    if let point = canvasPoint(from: value.location) {
+                        if appState.previewClick(canvasPoint: point, extend: true) {
+                            dragHitWord = true
+                        }
+                    }
+                }
+            }
+            .onEnded { value in
+                defer { dragIsActive = false }
+                let movement = hypot(value.translation.width, value.translation.height)
+                let isTap = movement < 4
+
+                if dragWasPlayingAtStart {
+                    if isTap { appState.pause() }
+                    return
+                }
+
+                guard !dragHitWord, isTap else { return }
+                if dragHadSelectionAtStart {
+                    // Click-away deselects; the *next* empty click toggles play.
+                    appState.clearWordSelection()
+                } else {
+                    appState.togglePlay()
+                }
+            }
+    }
+
+    /// Highlight boxes for the current word selection, drawn in view space
+    /// by scaling the canvas-space rects down to the preview box's size.
+    private var selectionHighlightOverlay: some View {
+        let scale = boxSize.width > 0 ? boxSize.width / StyleSettings.canvasWidth : 0
+        return ZStack(alignment: .topLeading) {
+            if scale > 0 {
+                ForEach(Array(appState.selectionHighlightRects.enumerated()), id: \.offset) { _, rect in
+                    RoundedRectangle(cornerRadius: 6 * scale)
+                        .fill(Color.accentColor.opacity(0.28))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6 * scale)
+                                .stroke(Color.accentColor, lineWidth: 1.5)
+                        )
+                        .frame(width: rect.width * scale, height: rect.height * scale)
+                        .position(x: (rect.minX + rect.width / 2) * scale, y: (rect.minY + rect.height / 2) * scale)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// Small floating Bold / Italic / Underline bar, shown while a word
+    /// selection is active.
+    @ViewBuilder
+    private var formatBar: some View {
+        if appState.wordSelection != nil {
+            HStack(spacing: 10) {
+                Button {
+                    appState.toggleFormat(.bold)
+                } label: {
+                    Text("B").font(.system(size: 13, weight: .bold))
+                }
+                .keyboardShortcut("b", modifiers: .command)
+                .help("Bold (⌘B)")
+
+                Button {
+                    appState.toggleFormat(.italic)
+                } label: {
+                    Text("I").font(.system(size: 13, weight: .semibold)).italic()
+                }
+                .keyboardShortcut("i", modifiers: .command)
+                .help("Italic (⌘I)")
+
+                Button {
+                    appState.toggleFormat(.underline)
+                } label: {
+                    Text("U").font(.system(size: 13, weight: .semibold)).underline()
+                }
+                .keyboardShortcut("u", modifiers: .command)
+                .help("Underline (⌘U)")
+
+                Divider().frame(height: 14)
+
+                Button {
+                    appState.clearWordSelection()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .help("Clear Selection")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .padding(.top, 12)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            .animation(.easeOut(duration: 0.12), value: appState.wordSelection)
+        }
     }
 
     /// Routes scroll-wheel / trackpad scrolling over the preview into a

@@ -24,6 +24,8 @@ final class RibbonLayout {
         /// Vertical center of the line's box (ribbon coordinates).
         let centerY: CGFloat
         let segmentIndex: Int
+        /// This line's UTF-16 range within its segment's plain text.
+        let range: NSRange
     }
 
     struct SegmentExtent {
@@ -34,12 +36,17 @@ final class RibbonLayout {
     let lines: [Line]
     let segmentExtents: [SegmentExtent]
     let totalHeight: CGFloat
+    /// Marker-free text per segment (parallel to the script's segments).
+    let segmentPlainTexts: [String]
 
     private static let foregroundColorKey = NSAttributedString.Key(kCTForegroundColorAttributeName as String)
 
     init(script: Script, style: StyleSettings) {
         let font = style.resolvedFont()
-        let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        let fm = NSFontManager.shared
+        let boldFont = fm.convert(font, toHaveTrait: .boldFontMask)
+        let italicFont = fm.convert(font, toHaveTrait: .italicFontMask)
+        let boldItalicFont = fm.convert(boldFont, toHaveTrait: .italicFontMask)
         let primaryColor = style.primaryTextColor.cgColor
         let secondaryColor = style.secondaryTextColor.cgColor
         let accentColor = style.resolvedEmphasisColor.cgColor
@@ -69,6 +76,8 @@ final class RibbonLayout {
                 runs: parsed[segIndex].runs,
                 font: font,
                 boldFont: boldFont,
+                italicFont: italicFont,
+                boldItalicFont: boldItalicFont,
                 primary: primaryColor,
                 secondary: secondaryColor,
                 accent: accentColor,
@@ -86,15 +95,15 @@ final class RibbonLayout {
                 let centerY = cursorTop + blankHeight / 2
                 let baselineY = Self.baseline(forCenterY: centerY, lineHeight: blankHeight, font: font)
                 let empty = CTLineCreateWithAttributedString(NSAttributedString(string: "", attributes: [.font: font]))
-                builtLines.append(Line(ctLine: empty, baselineY: baselineY, centerY: centerY, segmentIndex: segIndex))
+                builtLines.append(Line(ctLine: empty, baselineY: baselineY, centerY: centerY, segmentIndex: segIndex, range: NSRange(location: 0, length: 0)))
                 firstCenter = centerY
                 lastCenter = centerY
                 cursorTop += blankHeight
             } else {
-                for ctLine in ctLines {
+                for (ctLine, lineRange) in ctLines {
                     let centerY = cursorTop + lineHeight / 2
                     let baselineY = Self.baseline(forCenterY: centerY, lineHeight: lineHeight, font: font)
-                    builtLines.append(Line(ctLine: ctLine, baselineY: baselineY, centerY: centerY, segmentIndex: segIndex))
+                    builtLines.append(Line(ctLine: ctLine, baselineY: baselineY, centerY: centerY, segmentIndex: segIndex, range: lineRange))
                     if firstCenter == nil { firstCenter = centerY }
                     lastCenter = centerY
                     cursorTop += lineHeight
@@ -109,6 +118,7 @@ final class RibbonLayout {
 
         self.lines = builtLines
         self.segmentExtents = extents
+        self.segmentPlainTexts = parsed.map { $0.plain }
         self.totalHeight = cursorTop
     }
 
@@ -130,6 +140,8 @@ final class RibbonLayout {
         runs: [EmphasisMarkup.Run],
         font: NSFont,
         boldFont: NSFont,
+        italicFont: NSFont,
+        boldItalicFont: NSFont,
         primary: CGColor,
         secondary: CGColor,
         accent: CGColor,
@@ -153,15 +165,30 @@ final class RibbonLayout {
             }
         }
 
-        // Overlay emphasis runs; their UTF-16 ranges refer to the plain text,
-        // which is exactly the chunk texts joined by single spaces.
+        // Overlay emphasis; ranges refer to the plain text, which is exactly
+        // the chunk texts joined by single spaces. Bold/italic can overlap,
+        // so fonts are applied from per-character masks.
         let totalLen = result.length
+        let masks = EmphasisMarkup.characterAttributes(runs: runs, length: totalLen)
+        var i = 0
+        while i < totalLen {
+            let bold = masks[i].contains(.bold)
+            let italic = masks[i].contains(.italic)
+            var j = i
+            while j < totalLen,
+                  masks[j].contains(.bold) == bold,
+                  masks[j].contains(.italic) == italic { j += 1 }
+            if bold || italic {
+                let f = bold && italic ? boldItalicFont : (bold ? boldFont : italicFont)
+                result.addAttribute(.font, value: f, range: NSRange(location: i, length: j - i))
+            }
+            i = j
+        }
         for run in runs {
             let lo = max(0, min(run.range.lowerBound, totalLen))
             let hi = max(lo, min(run.range.upperBound, totalLen))
             guard hi > lo else { continue }
             let r = NSRange(location: lo, length: hi - lo)
-            if run.bold { result.addAttribute(.font, value: boldFont, range: r) }
             if run.underline {
                 result.addAttribute(Self.underlineKey, value: CTUnderlineStyle.single.rawValue as NSNumber, range: r)
             }
@@ -170,19 +197,81 @@ final class RibbonLayout {
         return result
     }
 
+    // MARK: - Hit-testing & highlight geometry (for in-preview formatting)
+
+    /// The X where a line's glyphs start on the canvas (honors alignment).
+    func xOrigin(of line: Line, style: StyleSettings) -> CGFloat {
+        var x = style.horizontalMargin
+        if style.alignment == .center {
+            let lineWidth = CGFloat(CTLineGetTypographicBounds(line.ctLine, nil, nil, nil))
+            x += max(0, (style.textWidth - lineWidth) / 2)
+        }
+        return x
+    }
+
+    /// Maps a canvas point (top-down, 1920x1080) at the given scroll offset to
+    /// the whitespace-delimited word under it, as (segmentIndex, UTF-16 range
+    /// in that segment's plain text).
+    func wordHit(canvasPoint: CGPoint, scrollOffset: CGFloat, style: StyleSettings) -> (segmentIndex: Int, plainRange: Range<Int>)? {
+        guard !lines.isEmpty else { return nil }
+        let ribbonY = canvasPoint.y + scrollOffset
+        var best: Line?
+        var bestDist = CGFloat.greatestFiniteMagnitude
+        for line in lines {
+            let d = abs(line.centerY - ribbonY)
+            if d < bestDist { bestDist = d; best = line }
+        }
+        guard let line = best, bestDist <= style.lineHeight / 2, line.range.length > 0 else { return nil }
+        let x0 = xOrigin(of: line, style: style)
+        let relX = canvasPoint.x - x0
+        let lineWidth = CGFloat(CTLineGetTypographicBounds(line.ctLine, nil, nil, nil))
+        guard relX >= -10, relX <= lineWidth + 10 else { return nil }
+        var idx = CTLineGetStringIndexForPosition(line.ctLine, CGPoint(x: relX, y: 0))
+        guard idx != kCFNotFound else { return nil }
+        let lineEnd = line.range.location + line.range.length
+        if idx >= lineEnd { idx = lineEnd - 1 }
+        guard line.segmentIndex < segmentPlainTexts.count else { return nil }
+        let plain = segmentPlainTexts[line.segmentIndex]
+        guard let word = EmphasisMarkup.wordRange(inPlain: plain, at: idx) else { return nil }
+        return (line.segmentIndex, word)
+    }
+
+    /// Bounding boxes (ribbon coords, top-down) for a plain-text range within
+    /// one segment — one rect per wrapped line the range touches.
+    func rects(forSegment segIndex: Int, plainRange: Range<Int>, style: StyleSettings) -> [CGRect] {
+        var out: [CGRect] = []
+        for line in lines where line.segmentIndex == segIndex && line.range.length > 0 {
+            let lineLo = line.range.location
+            let lineHi = lineLo + line.range.length
+            let lo = max(plainRange.lowerBound, lineLo)
+            let hi = min(plainRange.upperBound, lineHi)
+            guard hi > lo else { continue }
+            let x0 = xOrigin(of: line, style: style)
+            let xa = CGFloat(CTLineGetOffsetForStringIndex(line.ctLine, lo, nil))
+            let xb = CGFloat(CTLineGetOffsetForStringIndex(line.ctLine, hi, nil))
+            out.append(CGRect(
+                x: x0 + min(xa, xb),
+                y: line.centerY - style.lineHeight / 2,
+                width: abs(xb - xa),
+                height: style.lineHeight
+            ))
+        }
+        return out
+    }
+
     /// Manual CoreText line-breaking so we control line height ourselves
     /// (rather than relying on CTFramesetter's natural leading).
-    private static func wrapLines(attrString: NSAttributedString, maxWidth: CGFloat) -> [CTLine] {
+    private static func wrapLines(attrString: NSAttributedString, maxWidth: CGFloat) -> [(line: CTLine, range: NSRange)] {
         guard attrString.length > 0 else { return [] }
         let typesetter = CTTypesetterCreateWithAttributedString(attrString as CFAttributedString)
-        var result: [CTLine] = []
+        var result: [(CTLine, NSRange)] = []
         var start = 0
         let length = attrString.length
         while start < length {
             let suggested = CTTypesetterSuggestLineBreak(typesetter, start, Double(maxWidth))
             let count = max(suggested, 1) // guarantee forward progress even if a glyph can't fit
             let line = CTTypesetterCreateLine(typesetter, CFRange(location: start, length: count))
-            result.append(line)
+            result.append((line, NSRange(location: start, length: count)))
             start += count
         }
         return result

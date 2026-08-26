@@ -60,7 +60,7 @@ struct InspectorView: View {
             ColorPicker("Accent Color", selection: emphasisColorBinding)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("AI Suggestions")
+                Text("AI Suggestions (bold only)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

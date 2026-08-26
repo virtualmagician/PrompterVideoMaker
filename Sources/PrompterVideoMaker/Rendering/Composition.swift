@@ -49,6 +49,28 @@ final class PrompterComposition {
         CGFloat(scrollCurve.offset(at: t - style.leadIn))
     }
 
+    /// Word under a canvas point (top-down 1920x1080 coords, as displayed —
+    /// mirroring is unapplied here) at the given video time.
+    func hitTestWord(canvasPoint: CGPoint, atVideoTime t: Double) -> (segmentIndex: Int, plainRange: Range<Int>)? {
+        let p = style.mirrored
+            ? CGPoint(x: StyleSettings.canvasWidth - canvasPoint.x, y: canvasPoint.y)
+            : canvasPoint
+        return layout.wordHit(canvasPoint: p, scrollOffset: scrollOffset(atVideoTime: t), style: style)
+    }
+
+    /// Canvas-space (top-down, as displayed) highlight boxes for a plain-text
+    /// range of one segment at the given video time.
+    func highlightRects(segmentIndex: Int, plainRange: Range<Int>, atVideoTime t: Double) -> [CGRect] {
+        let off = scrollOffset(atVideoTime: t)
+        return layout.rects(forSegment: segmentIndex, plainRange: plainRange, style: style).map { r in
+            var rect = r.offsetBy(dx: 0, dy: -off)
+            if style.mirrored {
+                rect.origin.x = StyleSettings.canvasWidth - rect.maxX
+            }
+            return rect
+        }
+    }
+
     /// Inverse of `scrollOffset(atVideoTime:)` by bisection — the curve is
     /// monotone, so this finds the video time whose ribbon position matches
     /// `target`, clamped to [0, videoDuration].

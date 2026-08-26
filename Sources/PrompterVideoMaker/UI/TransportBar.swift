@@ -16,51 +16,58 @@ struct TransportBar: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 8) {
-                transportButton("backward.end.fill", help: "Jump to Start") {
-                    appState.jumpToStart()
-                }
-                transportButton("backward.frame.fill", help: "Previous Segment") {
-                    appState.prevSegment()
-                }
-
-                Button {
-                    appState.togglePlay()
-                } label: {
-                    Image(systemName: appState.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 30, height: 26)
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.space, modifiers: [])
-                .disabled(appState.composition == nil)
-                .help("Play / Pause (Space)")
-
-                transportButton("forward.frame.fill", help: "Next Segment") {
-                    appState.nextSegment()
-                }
-                transportButton("forward.end.fill", help: "Jump to End") {
-                    appState.jumpToEnd()
-                }
+        VStack(spacing: 0) {
+            if !appState.project.script.isEmpty {
+                TimelineStrip()
+                Divider()
             }
 
-            Slider(
-                value: Binding(
-                    get: { appState.playheadVideoTime },
-                    set: { appState.seek(to: $0) }
-                ),
-                in: 0...max(appState.videoDuration, 0.001)
-            )
-            .disabled(appState.composition == nil)
+            HStack(spacing: 14) {
+                HStack(spacing: 8) {
+                    transportButton("backward.end.fill", help: "Jump to Start") {
+                        appState.jumpToStart()
+                    }
+                    transportButton("backward.frame.fill", help: "Previous Segment") {
+                        appState.prevSegment()
+                    }
 
-            Text("\(formatTime(appState.playheadVideoTime)) / \(formatTime(appState.videoDuration))")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 120, alignment: .trailing)
+                    Button {
+                        appState.togglePlay()
+                    } label: {
+                        Image(systemName: appState.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 30, height: 26)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.space, modifiers: [])
+                    .disabled(appState.composition == nil)
+                    .help("Play / Pause (Space)")
+
+                    transportButton("forward.frame.fill", help: "Next Segment") {
+                        appState.nextSegment()
+                    }
+                    transportButton("forward.end.fill", help: "Jump to End") {
+                        appState.jumpToEnd()
+                    }
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { appState.playheadVideoTime },
+                        set: { appState.seek(to: $0) }
+                    ),
+                    in: 0...max(appState.videoDuration, 0.001)
+                )
+                .disabled(appState.composition == nil)
+
+                Text("\(formatTime(appState.playheadVideoTime)) / \(formatTime(appState.videoDuration))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 120, alignment: .trailing)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(.regularMaterial)
     }
 

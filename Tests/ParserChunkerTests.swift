@@ -135,8 +135,8 @@ import Foundation
 
     @Test func parsesRealSampleFile() throws {
         let path = "/Users/marcotempest/Library/CloudStorage/Dropbox-Newmagic/Marco Tempest/PrompterVideoMaker/Sample_Input/sample_VO.srt"
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        let text = try String(contentsOfFile: path, encoding: .utf8)
+        // Skip when the file is missing OR unreadable (cloud-storage hiccups).
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
 
         let segments = try SRTParser.parse(text, stripSpeakerPrefixes: true)
         #expect(segments.count == 118)
