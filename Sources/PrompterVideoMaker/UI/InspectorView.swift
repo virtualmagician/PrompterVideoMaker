@@ -232,6 +232,30 @@ struct InspectorView: View {
                 Text("Lead-out: \(String(format: "%.1f", style.wrappedValue.leadOut))s")
             }
             Toggle("Include Audio", isOn: style.includeAudio)
+
+            Picker("Codec", selection: Binding(
+                get: { style.wrappedValue.resolvedCodec },
+                set: { appState.project.style.videoCodec = $0 }
+            )) {
+                ForEach(VideoCodecSetting.allCases) { c in
+                    Text(c.displayName).tag(c)
+                }
+            }
+
+            Picker("Quality", selection: Binding(
+                get: { style.wrappedValue.resolvedQuality },
+                set: { appState.project.style.qualityPreset = $0 }
+            )) {
+                ForEach(QualityPresetSetting.allCases) { q in
+                    Text(q.displayName).tag(q)
+                }
+            }
+
+            if let estimate = estimatedSizeText {
+                Text(estimate)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Label("Export", systemImage: "film")
         }
@@ -262,6 +286,15 @@ struct InspectorView: View {
         } header: {
             Label("Timing", systemImage: "clock.arrow.circlepath")
         }
+    }
+
+    private var estimatedSizeText: String? {
+        guard let comp = appState.composition else { return nil }
+        let withAudio = appState.project.style.includeAudio && appState.project.audioPath != nil
+        let bytes = appState.project.style.estimatedFileSizeBytes(
+            videoDuration: comp.videoDuration, withAudio: withAudio)
+        let str = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        return "Estimated size: \u{2248} \(str)"
     }
 
     private var globalOffsetLabel: String {

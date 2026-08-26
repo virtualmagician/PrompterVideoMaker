@@ -47,6 +47,23 @@ enum TextAlignmentSetting: String, Codable, CaseIterable {
     case leading, center
 }
 
+enum VideoCodecSetting: String, Codable, CaseIterable, Identifiable {
+    case h264, hevc
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .h264: return "H.264 (compatible)"
+        case .hevc: return "HEVC (smaller)"
+        }
+    }
+}
+
+enum QualityPresetSetting: String, Codable, CaseIterable, Identifiable {
+    case draft, standard, high, maximum
+    var id: String { rawValue }
+    var displayName: String { rawValue.capitalized }
+}
+
 /// Everything that controls how the prompter looks and exports.
 /// Canvas is always 1920x1080.
 struct StyleSettings: Codable, Equatable {
@@ -87,6 +104,33 @@ struct StyleSettings: Codable, Equatable {
     var mirrored: Bool = false
 
     // Export settings
+    /// Optional so projects/defaults saved by older versions still decode.
+    var videoCodec: VideoCodecSetting?
+    var qualityPreset: QualityPresetSetting?
+    var resolvedCodec: VideoCodecSetting { videoCodec ?? .h264 }
+    var resolvedQuality: QualityPresetSetting { qualityPreset ?? .standard }
+
+    static let audioBitrate = 128_000
+
+    /// Target average video bitrate for the codec/quality combination
+    /// (bits per second). HEVC needs roughly half the bits of H.264 for the
+    /// same visual quality.
+    var videoBitrate: Int {
+        let h264: [QualityPresetSetting: Int] = [
+            .draft: 2_000_000, .standard: 5_000_000,
+            .high: 8_000_000, .maximum: 12_000_000,
+        ]
+        let base = h264[resolvedQuality] ?? 5_000_000
+        return resolvedCodec == .hevc ? base / 2 : base
+    }
+
+    /// Rough output size (bytes); text-on-black undershoots the target
+    /// bitrate, so this is an upper-ish estimate.
+    func estimatedFileSizeBytes(videoDuration: Double, withAudio: Bool) -> Int {
+        let bps = videoBitrate + (withAudio ? Self.audioBitrate : 0)
+        return Int(videoDuration * Double(bps) / 8)
+    }
+
     var fps: Int = 60
     /// Seconds of roll-in before the first cue.
     var leadIn: Double = 2.0

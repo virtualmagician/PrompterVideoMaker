@@ -64,17 +64,21 @@ final class VideoExporter {
         // not nested inside it — nesting it throws
         // "Compression property AVVideoColorPropertiesKey is not supported
         // for video codec type avc1" at AVAssetWriterInput init time.
-        let compressionProperties: [String: Any] = [
-            AVVideoAverageBitRateKey: 12_000_000,
-            AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
+        var compressionProperties: [String: Any] = [
+            AVVideoAverageBitRateKey: composition.style.videoBitrate
         ]
+        if composition.style.resolvedCodec == .h264 {
+            compressionProperties[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
+        }
         let colorProperties: [String: Any] = [
             AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
             AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
             AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
         ]
         let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: composition.style.resolvedCodec == .hevc
+                ? AVVideoCodecType.hevc
+                : AVVideoCodecType.h264,
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
             AVVideoCompressionPropertiesKey: compressionProperties,
@@ -119,7 +123,7 @@ final class VideoExporter {
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: 48_000,
                 AVNumberOfChannelsKey: 2,
-                AVEncoderBitRateKey: 128_000
+                AVEncoderBitRateKey: StyleSettings.audioBitrate
             ])
             aInput.expectsMediaDataInRealTime = false
             if writer.canAdd(aInput) {

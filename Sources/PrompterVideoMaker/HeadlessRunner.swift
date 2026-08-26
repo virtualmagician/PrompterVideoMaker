@@ -276,6 +276,14 @@ enum HeadlessRunner {
         if let v = value(for: "--chunk-words", in: args), let n = Int(v) { style.maxChunkWords = min(max(1, n), 1000) }
         if let v = value(for: "--lead-in", in: args), let n = Double(v) { style.leadIn = n }
         if let v = value(for: "--lead-out", in: args), let n = Double(v) { style.leadOut = n }
+        if let v = value(for: "--codec", in: args) {
+            guard let c = VideoCodecSetting(rawValue: v.lowercased()) else { fail("--codec must be h264 or hevc") }
+            style.videoCodec = c
+        }
+        if let v = value(for: "--quality", in: args) {
+            guard let q = QualityPresetSetting(rawValue: v.lowercased()) else { fail("--quality must be draft, standard, high or maximum") }
+            style.qualityPreset = q
+        }
         if hasFlag("--mirror", in: args) { style.mirrored = true }
         if hasFlag("--no-audio", in: args) { style.includeAudio = false }
     }
