@@ -32,11 +32,23 @@ final class VideoExporter {
     private let composition: PrompterComposition
     private let audioURL: URL?
     private let outputURL: URL
+    private let titleCard: TitleCardInfo?
 
-    init(composition: PrompterComposition, audioURL: URL?, outputURL: URL) {
+    init(composition: PrompterComposition, audioURL: URL?, outputURL: URL, titleCard: TitleCardInfo? = nil) {
         self.composition = composition
         self.audioURL = audioURL
         self.outputURL = outputURL
+        self.titleCard = titleCard
+    }
+
+    /// 1 when the slate frame is prepended; the whole timeline (audio
+    /// included) shifts by this many frames so cue timings stay exact.
+    private var slateFrames: Int {
+        titleCard != nil && composition.style.resolvedTitleCardEnabled ? 1 : 0
+    }
+
+    private var slateSeconds: Double {
+        Double(slateFrames) / Double(max(1, composition.style.fps))
     }
 
     /// H.264 .mp4, 1920x1080, composition.style.fps (30 or 60), ~12 Mbps,
@@ -139,7 +151,7 @@ final class VideoExporter {
         }
         writer.startSession(atSourceTime: .zero)
 
-        let frameCount = max(1, Int((composition.videoDuration * Double(fps)).rounded()))
+        let frameCount = slateFrames + max(1, Int((composition.videoDuration * Double(fps)).rounded()))
         let videoQueue = DispatchQueue(label: "PrompterVideoMaker.videoExport")
         let hasAudio = audioInput != nil
         let videoWeight = hasAudio ? 0.85 : 1.0
@@ -157,7 +169,7 @@ final class VideoExporter {
                 throw VideoExportError.writerFailed(reader.error)
             }
             let audioQueue = DispatchQueue(label: "PrompterVideoMaker.audioExport")
-            let leadInTime = CMTime(seconds: style.leadIn, preferredTimescale: 600)
+            let leadInTime = CMTime(seconds: style.leadIn + slateSeconds, preferredTimescale: 600)
 
             async let videoTask: Void = Self.driveVideo(
                 writer: writer,
@@ -166,6 +178,8 @@ final class VideoExporter {
                 composition: composition,
                 fps: fps,
                 frameCount: frameCount,
+                slate: slateFrames,
+                titleCard: titleCard,
                 width: width,
                 height: height,
                 queue: videoQueue,
@@ -178,7 +192,7 @@ final class VideoExporter {
                 output: output,
                 shiftBy: leadInTime,
                 totalDuration: audioDurationSeconds,
-                maxOutputSeconds: composition.videoDuration,
+                maxOutputSeconds: composition.videoDuration + slateSeconds,
                 queue: audioQueue,
                 progress: { p in combiner.updateAudio(p) }
             )
@@ -191,6 +205,8 @@ final class VideoExporter {
                 composition: composition,
                 fps: fps,
                 frameCount: frameCount,
+                slate: slateFrames,
+                titleCard: titleCard,
                 width: width,
                 height: height,
                 queue: videoQueue,
@@ -198,7 +214,7 @@ final class VideoExporter {
             )
         }
 
-        writer.endSession(atSourceTime: CMTime(seconds: composition.videoDuration, preferredTimescale: 600))
+        writer.endSession(atSourceTime: CMTime(seconds: composition.videoDuration + slateSeconds, preferredTimescale: 600))
 
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             writer.finishWriting { cont.resume() }
@@ -219,6 +235,8 @@ final class VideoExporter {
         composition: PrompterComposition,
         fps: Int,
         frameCount: Int,
+        slate: Int,
+        titleCard: TitleCardInfo?,
         width: Int,
         height: Int,
         queue: DispatchQueue,
@@ -267,12 +285,21 @@ final class VideoExporter {
                             space: colorSpace,
                             bitmapInfo: bitmapInfo
                         ) {
-                            let videoTime = Double(i) / Double(fps)
-                            composition.draw(
-                                atVideoTime: videoTime,
-                                into: ctx,
-                                size: CGSize(width: width, height: height)
-                            )
+                            if i < slate, let card = titleCard {
+                                TitleCardRenderer.draw(
+                                    info: card,
+                                    style: composition.style,
+                                    into: ctx,
+                                    size: CGSize(width: width, height: height)
+                                )
+                            } else {
+                                let videoTime = Double(i - slate) / Double(fps)
+                                composition.draw(
+                                    atVideoTime: videoTime,
+                                    into: ctx,
+                                    size: CGSize(width: width, height: height)
+                                )
+                            }
                         } else {
                             frameError = VideoExportError.contextCreationFailed
                         }

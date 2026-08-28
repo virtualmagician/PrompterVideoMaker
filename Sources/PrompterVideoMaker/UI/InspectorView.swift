@@ -233,6 +233,11 @@ struct InspectorView: View {
             }
             Toggle("Include Audio", isOn: style.includeAudio)
 
+            Toggle("Title Card (first frame)", isOn: Binding(
+                get: { style.wrappedValue.resolvedTitleCardEnabled },
+                set: { appState.project.style.titleCardEnabled = $0 }
+            ))
+
             Picker("Codec", selection: Binding(
                 get: { style.wrappedValue.resolvedCodec },
                 set: { appState.project.style.videoCodec = $0 }

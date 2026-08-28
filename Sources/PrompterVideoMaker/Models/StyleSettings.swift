@@ -112,6 +112,11 @@ struct StyleSettings: Codable, Equatable {
 
     static let audioBitrate = 128_000
 
+    /// One-frame slate (project name, date, duration) at the video's start.
+    /// Optional so older saved projects/defaults still decode.
+    var titleCardEnabled: Bool?
+    var resolvedTitleCardEnabled: Bool { titleCardEnabled ?? true }
+
     /// Target average video bitrate for the codec/quality combination
     /// (bits per second). HEVC needs roughly half the bits of H.264 for the
     /// same visual quality.

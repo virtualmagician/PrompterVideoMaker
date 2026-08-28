@@ -924,7 +924,12 @@ final class AppState: ObservableObject {
         exportTask?.cancel()
         exportPhase = .exporting(0)
         let audioURL: URL? = (project.style.includeAudio ? project.audioPath.map { URL(fileURLWithPath: $0) } : nil)
-        let exporter = VideoExporter(composition: comp, audioURL: audioURL, outputURL: url)
+        let titleCard = TitleCardInfo(
+            projectName: projectFileURL?.deletingPathExtension().lastPathComponent ?? "Untitled",
+            exportDate: Date(),
+            videoDuration: comp.videoDuration
+        )
+        let exporter = VideoExporter(composition: comp, audioURL: audioURL, outputURL: url, titleCard: titleCard)
         exportTask = Task {
             do {
                 try await exporter.export { [weak self] p in

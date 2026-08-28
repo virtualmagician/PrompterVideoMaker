@@ -159,7 +159,16 @@ enum HeadlessRunner {
             let audioURL = audioPath.map { URL(fileURLWithPath: $0) }
             let outputURL = URL(fileURLWithPath: outPath)
             let composition = PrompterComposition(script: script, style: style)
-            let exporter = VideoExporter(composition: composition, audioURL: audioURL, outputURL: outputURL)
+            let titleName = value(for: "--title", in: args)
+                ?? URL(fileURLWithPath: srtPath).deletingPathExtension().lastPathComponent
+            let titleCard = TitleCardInfo(
+                projectName: titleName,
+                exportDate: Date(),
+                videoDuration: composition.videoDuration
+            )
+            let exporter = VideoExporter(
+                composition: composition, audioURL: audioURL,
+                outputURL: outputURL, titleCard: titleCard)
 
             let semaphore = DispatchSemaphore(value: 0)
             var exportError: Error?
@@ -286,6 +295,7 @@ enum HeadlessRunner {
         }
         if hasFlag("--mirror", in: args) { style.mirrored = true }
         if hasFlag("--no-audio", in: args) { style.includeAudio = false }
+        if hasFlag("--no-title-card", in: args) { style.titleCardEnabled = false }
     }
 
     private static func value(for flag: String, in args: [String]) -> String? {
