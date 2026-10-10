@@ -11,7 +11,8 @@ PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$PROJ/dist/PrompterVideoMaker.app"
 PROFILE="${1:-PrompterNotary}"
 SUBZIP="$PROJ/dist/PrompterVideoMaker-notarize.zip"
-VERSION="$(defaults read "$APP/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo dev)"
+# plutil reads the file directly; `defaults read` can return a stale cached value.
+VERSION="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null || echo dev)"
 DISTZIP="$PROJ/dist/PrompterVideoMaker-$VERSION.zip"
 
 [[ -d "$APP" ]] || { echo "Run Scripts/build_app.sh first ($APP missing)" >&2; exit 1; }
