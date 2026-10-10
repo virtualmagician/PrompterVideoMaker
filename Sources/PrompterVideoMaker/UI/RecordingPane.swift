@@ -24,6 +24,9 @@ struct RecordingPane: View {
 
     @State private var availableDevices: [AudioInputDevice] = []
     @State private var monitorError: String?
+    @State private var speechLocales: [Locale] = []
+    /// Mirrors `SpeechLanguage.preferredLocale` so the menu label refreshes.
+    @State private var preferredSpeechLocale: Locale? = SpeechLanguage.preferredLocale
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,6 +45,9 @@ struct RecordingPane: View {
         .onAppear {
             availableDevices = AudioRecorder.availableInputDevices()
             startMonitoringIfNeeded()
+        }
+        .task {
+            speechLocales = await SpeechLanguage.supportedLocales()
         }
         .onChange(of: recorder.recordingInterrupted) { _, interrupted in
             guard interrupted else { return }
@@ -193,6 +199,55 @@ struct RecordingPane: View {
         .disabled(isMicrophonePickerDisabled)
     }
 
+    // MARK: - Language picker
+
+    private var currentLanguageName: String {
+        guard let preferred = preferredSpeechLocale else { return "Automatic" }
+        return SpeechLanguage.displayName(for: preferred)
+    }
+
+    private func selectSpeechLocale(_ locale: Locale?) {
+        SpeechLanguage.preferredLocale = locale
+        preferredSpeechLocale = locale
+    }
+
+    /// Spoken-language menu, styled like `microphonePicker`.
+    private var languagePicker: some View {
+        Menu {
+            Button {
+                selectSpeechLocale(nil)
+            } label: {
+                if preferredSpeechLocale == nil {
+                    Label("Automatic", systemImage: "checkmark")
+                } else {
+                    Text("Automatic")
+                }
+            }
+            Divider()
+            ForEach(speechLocales, id: \.identifier) { locale in
+                Button {
+                    selectSpeechLocale(locale)
+                } label: {
+                    let name = SpeechLanguage.displayName(for: locale)
+                    if preferredSpeechLocale?.identifier == locale.identifier {
+                        Label(name, systemImage: "checkmark")
+                    } else {
+                        Text(name)
+                    }
+                }
+            }
+        } label: {
+            Label(currentLanguageName, systemImage: "globe")
+                .font(.system(size: 12, weight: .medium))
+                .padding(.horizontal, 2)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderedProminent)
+        .tint(Color(white: 0.32))
+        .foregroundStyle(.white)
+        .fixedSize()
+    }
+
     private var isMicrophonePickerDisabled: Bool {
         switch appState.recordPhase {
         case .recording, .aligning: return true
@@ -224,10 +279,28 @@ struct RecordingPane: View {
                 Text("Microphone:")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 76, alignment: .leading)
                 microphonePicker
                 Spacer()
             }
             .frame(maxWidth: 560)
+
+            HStack(spacing: 8) {
+                Text("Language:")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: 76, alignment: .leading)
+                languagePicker
+                Spacer()
+            }
+            .frame(maxWidth: 560)
+
+            if preferredSpeechLocale == nil {
+                Text("Automatic: detected from your script text, else system language.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(maxWidth: 560, alignment: .leading)
+            }
 
             HStack(spacing: 16) {
                 Button {

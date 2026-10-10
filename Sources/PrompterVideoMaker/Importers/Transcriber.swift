@@ -32,30 +32,79 @@ enum Transcriber {
     }
 
     /// Raw recognized words with timestamps (used directly by the
-    /// script/recording aligner).
-    static func timedWords(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [TimedWord] {
+    /// script/recording aligner). `locale` selects the recognition language;
+    /// nil falls back to the system language, then en_US.
+    static func timedWords(
+        audioURL: URL,
+        locale: Locale? = nil,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> [TimedWord] {
         if #available(macOS 26.0, *) {
-            return try await transcribeModern(audioURL: audioURL, progress: progress)
+            return try await transcribeModern(audioURL: audioURL, locale: locale, progress: progress)
         } else {
-            return try await transcribeLegacy(audioURL: audioURL, progress: progress)
+            return try await transcribeLegacy(audioURL: audioURL, locale: locale, progress: progress)
         }
     }
 
-    static func transcribe(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [Segment] {
-        let words = try await timedWords(audioURL: audioURL, progress: progress)
+    /// Backward-compatible wrapper (system-default language).
+    static func timedWords(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [TimedWord] {
+        try await timedWords(audioURL: audioURL, locale: nil, progress: progress)
+    }
+
+    static func transcribe(
+        audioURL: URL,
+        locale: Locale? = nil,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> [Segment] {
+        let words = try await timedWords(audioURL: audioURL, locale: locale, progress: progress)
         guard !words.isEmpty else { throw TranscriberError.noSpeechFound }
         return group(words: words)
+    }
+
+    /// Backward-compatible wrapper (system-default language).
+    static func transcribe(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [Segment] {
+        try await transcribe(audioURL: audioURL, locale: nil, progress: progress)
+    }
+
+    // MARK: - Locale resolution
+
+    /// The locale the recognizer will actually use for a request, or nil when
+    /// no supported language is available. Order: the explicit `requested`
+    /// locale, then the system locale, then en_US. On macOS 26 each candidate
+    /// is mapped through `SpeechTranscriber.supportedLocale(equivalentTo:)`
+    /// (with a same-language fallback for bare codes such as "de"); on macOS 15
+    /// a candidate is usable when `SFSpeechRecognizer(locale:)` accepts it.
+    static func resolvedLocale(requested: Locale?) async -> Locale? {
+        let candidates = [requested, Locale.current, Locale(identifier: "en_US")].compactMap { $0 }
+        if #available(macOS 26.0, *) {
+            var supported: [Locale]?
+            for candidate in candidates {
+                if let match = await SpeechTranscriber.supportedLocale(equivalentTo: candidate) {
+                    return match
+                }
+                // A bare language code ("de") may have no direct equivalent;
+                // pick a supported regional variant of the same language.
+                if supported == nil { supported = Array(await SpeechTranscriber.supportedLocales) }
+                if let match = SpeechLanguage.bestMatch(for: candidate, in: supported ?? []) {
+                    return match
+                }
+            }
+            return nil
+        } else {
+            let supported = Array(SFSpeechRecognizer.supportedLocales())
+            for candidate in candidates {
+                if SFSpeechRecognizer(locale: candidate) != nil { return candidate }
+                if let match = SpeechLanguage.bestMatch(for: candidate, in: supported) { return match }
+            }
+            return nil
+        }
     }
 
     // MARK: - macOS 26 SpeechAnalyzer path
 
     @available(macOS 26.0, *)
-    private static func transcribeModern(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [TimedWord] {
-        var resolvedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale.current)
-        if resolvedLocale == nil {
-            resolvedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en_US"))
-        }
-        guard let locale = resolvedLocale else {
+    private static func transcribeModern(audioURL: URL, locale requested: Locale?, progress: @escaping @Sendable (Double) -> Void) async throws -> [TimedWord] {
+        guard let locale = await resolvedLocale(requested: requested) else {
             throw TranscriberError.localeUnsupported
         }
 
@@ -115,14 +164,14 @@ enum Transcriber {
 
     // MARK: - macOS 15 SFSpeechRecognizer fallback
 
-    private static func transcribeLegacy(audioURL: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> [TimedWord] {
+    private static func transcribeLegacy(audioURL: URL, locale requested: Locale?, progress: @escaping @Sendable (Double) -> Void) async throws -> [TimedWord] {
         let auth = await withCheckedContinuation { (cont: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
             SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }
         }
         guard auth == .authorized else { throw TranscriberError.notAuthorized }
 
-        guard let recognizer = SFSpeechRecognizer(locale: Locale.current)
-                ?? SFSpeechRecognizer(locale: Locale(identifier: "en_US")),
+        guard let locale = await resolvedLocale(requested: requested),
+              let recognizer = SFSpeechRecognizer(locale: locale),
               recognizer.isAvailable else {
             throw TranscriberError.recognizerUnavailable
         }
@@ -167,18 +216,45 @@ enum Transcriber {
 
     /// Groups timed words into readable cues: break on sentence-ending
     /// punctuation, on silence gaps > 0.7 s, or when a cue reaches 14 words.
-    private static func group(words: [TimedWord]) -> [Segment] {
+    /// Each produced Segment carries `wordTimings` whose UTF-16 ranges index
+    /// exactly into `Segment.text` (the text is built word by word, so no
+    /// post-hoc string cleanup can shift offsets).
+    static func group(words: [TimedWord]) -> [Segment] {
         var segments: [Segment] = []
         var current: [TimedWord] = []
 
         func flush() {
             guard let first = current.first, let last = current.last else { return }
-            let text = current.map(\.text).joined(separator: " ")
-                .replacingOccurrences(of: " ,", with: ",")
-                .replacingOccurrences(of: " .", with: ".")
-                .replacingOccurrences(of: " ?", with: "?")
-                .replacingOccurrences(of: " !", with: "!")
-            segments.append(Segment(text: text, start: first.start, end: last.end))
+            var text = ""
+            var length = 0 // UTF-16 length of `text`
+            var timings: [WordTiming] = []
+            for word in current {
+                if attachesToPrevious(word.text), !timings.isEmpty {
+                    // Detached punctuation token (", " "." "?" "!"): glue it
+                    // to the preceding word, and fold its timing into that word.
+                    text += word.text
+                    let added = word.text.utf16.count
+                    var prev = timings.removeLast()
+                    prev.word += word.text
+                    prev.length += added
+                    prev.end = max(prev.end, word.end)
+                    timings.append(prev)
+                    length += added
+                } else {
+                    if !text.isEmpty && !attachesToPrevious(word.text) {
+                        text += " "
+                        length += 1
+                    }
+                    let wordLength = word.text.utf16.count
+                    timings.append(WordTiming(word: word.text, location: length, length: wordLength,
+                                              start: word.start, end: word.end))
+                    text += word.text
+                    length += wordLength
+                }
+            }
+            var segment = Segment(text: text, start: first.start, end: last.end)
+            segment.wordTimings = timings
+            segments.append(segment)
             current = []
         }
 
@@ -195,5 +271,12 @@ enum Transcriber {
         }
         flush()
         return segments
+    }
+
+    /// Words that begin with punctuation are joined to the previous word
+    /// without a space (replaces the old " ," / " ." / " ?" / " !" cleanup).
+    private static func attachesToPrevious(_ text: String) -> Bool {
+        guard let first = text.first else { return false }
+        return first == "," || first == "." || first == "?" || first == "!"
     }
 }

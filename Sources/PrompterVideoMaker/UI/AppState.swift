@@ -651,7 +651,10 @@ final class AppState: ObservableObject {
         transcribePhase = .running(0)
         transcribeTask = Task {
             do {
-                let segments = try await Transcriber.transcribe(audioURL: audioURL) { [weak self] p in
+                // Importing audio has no script yet: only an explicit language
+                // choice applies (else the recognizer's system-language default).
+                let segments = try await Transcriber.transcribe(
+                    audioURL: audioURL, locale: SpeechLanguage.resolve(scriptText: nil)) { [weak self] p in
                     Task { @MainActor in
                         if case .running = self?.transcribePhase {
                             self?.transcribePhase = .running(p)
@@ -776,6 +779,12 @@ final class AppState: ObservableObject {
     /// audio files, which must never be deleted.
     private var pendingTakeURL: URL?
 
+    /// The whole script as plain prose (emphasis markup stripped), used to
+    /// auto-detect the spoken language when the user hasn't picked one.
+    private var scriptPlainTextForLanguage: String {
+        project.script.segments.map { EmphasisMarkup.strip($0.text) }.joined(separator: " ")
+    }
+
     func stopRecordingAndAlign() {
         guard let url = recorder.stop() else {
             recordPhase = .failed("No recording was captured.")
@@ -786,7 +795,8 @@ final class AppState: ObservableObject {
         recordPhase = .aligning(0)
         recordAlignTask = Task {
             do {
-                let words = try await Transcriber.timedWords(audioURL: url) { [weak self] p in
+                let words = try await Transcriber.timedWords(
+                    audioURL: url, locale: SpeechLanguage.resolve(scriptText: scriptPlainTextForLanguage)) { [weak self] p in
                     Task { @MainActor in
                         if case .aligning = self?.recordPhase {
                             self?.recordPhase = .aligning(p)
@@ -850,7 +860,8 @@ final class AppState: ObservableObject {
         recordPhase = .aligning(0)
         recordAlignTask = Task {
             do {
-                let words = try await Transcriber.timedWords(audioURL: url) { [weak self] p in
+                let words = try await Transcriber.timedWords(
+                    audioURL: url, locale: SpeechLanguage.resolve(scriptText: scriptPlainTextForLanguage)) { [weak self] p in
                     Task { @MainActor in
                         if case .aligning = self?.recordPhase {
                             self?.recordPhase = .aligning(p)

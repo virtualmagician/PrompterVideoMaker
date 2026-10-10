@@ -93,7 +93,7 @@ enum HeadlessRunner {
     // MARK: - --align
 
     /// --align --script <plain-text path> --audio <recording> --out <path.srt>
-    ///         [--granularity sentences|lines|paragraphs]
+    ///         [--granularity sentences|lines|paragraphs] [--language <id, e.g. de-CH>]
     /// Builds a script from pasted-style text, recognizes the recording, and
     /// aligns the known text against it to produce timed cues.
     private static func runAlign(args: [String]) {
@@ -108,11 +108,15 @@ enum HeadlessRunner {
             let script = ScriptImporter.script(fromPastedText: text, granularity: granularity)
             guard !script.isEmpty else { fail("Script text produced no segments") }
 
+            // --language wins; otherwise detect the language from the script text.
+            let locale = explicitLocale(in: args) ?? SpeechLanguage.detect(fromScript: EmphasisMarkup.strip(text))
+
             let semaphore = DispatchSemaphore(value: 0)
             var result: Result<[Transcriber.TimedWord], Error>?
             Task {
                 do {
-                    let words = try await Transcriber.timedWords(audioURL: URL(fileURLWithPath: audioPath)) { p in
+                    await reportLanguage(locale)
+                    let words = try await Transcriber.timedWords(audioURL: URL(fileURLWithPath: audioPath), locale: locale) { p in
                         print("progress: \(Int((p * 100).rounded()))%")
                         fflush(stdout)
                     }
@@ -224,16 +228,19 @@ enum HeadlessRunner {
 
     // MARK: - --transcribe
 
+    /// --transcribe --audio <path> --out <path.srt> [--language <id, e.g. de-CH>]
     private static func runTranscribe(args: [String]) {
         guard let audioPath = value(for: "--audio", in: args) else { fail("--transcribe requires --audio <path>") }
         guard let outPath = value(for: "--out", in: args) else { fail("--transcribe requires --out <path.srt>") }
         let audioURL = URL(fileURLWithPath: audioPath)
+        let locale = explicitLocale(in: args)
 
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<[Segment], Error>?
         Task {
             do {
-                let segments = try await Transcriber.transcribe(audioURL: audioURL) { p in
+                await reportLanguage(locale)
+                let segments = try await Transcriber.transcribe(audioURL: audioURL, locale: locale) { p in
                     print("progress: \(Int((p * 100).rounded()))%")
                     fflush(stdout)
                 }
@@ -296,6 +303,19 @@ enum HeadlessRunner {
         if hasFlag("--mirror", in: args) { style.mirrored = true }
         if hasFlag("--no-audio", in: args) { style.includeAudio = false }
         if hasFlag("--no-title-card", in: args) { style.titleCardEnabled = false }
+    }
+
+    /// `--language <identifier>` (de-CH, de_DE, en-US, ...) as a Locale.
+    private static func explicitLocale(in args: [String]) -> Locale? {
+        guard let id = value(for: "--language", in: args), !id.isEmpty else { return nil }
+        return Locale(identifier: id)
+    }
+
+    /// Prints which recognizer locale a request resolves to (diagnostics).
+    private static func reportLanguage(_ requested: Locale?) async {
+        let resolved = await Transcriber.resolvedLocale(requested: requested)
+        print("language: \(resolved?.identifier ?? "none") (requested: \(requested?.identifier ?? "default"))")
+        fflush(stdout)
     }
 
     private static func value(for flag: String, in args: [String]) -> String? {
