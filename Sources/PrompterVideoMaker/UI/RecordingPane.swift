@@ -365,12 +365,22 @@ struct RecordingPane: View {
         VStack(spacing: 10) {
             ProgressView(value: progress)
                 .frame(width: 260)
-            Text("Aligning\u{2026}")
+            // Recognition reports ~2% while the on-device language model is
+            // being prepared; the first use of a language downloads it.
+            Text(progress < 0.05 ? "Preparing the speech model\u{2026}" : "Aligning\u{2026}")
                 .font(.headline)
                 .foregroundStyle(.white)
-            Text("\(Int((progress * 100).rounded()))%")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.6))
+            if progress < 0.05 {
+                Text("The first use of a language downloads its on-device model. This can take a minute.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            } else {
+                Text("\(Int((progress * 100).rounded()))%")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
         }
         .padding(20)
     }

@@ -131,10 +131,21 @@ enum HeadlessRunner {
             switch result {
             case .success(let words):
                 let aligned = Aligner.align(script: script, words: words)
-                let srt = SRTParser.serialize(aligned.segments)
-                try srt.write(toFile: outPath, atomically: true, encoding: .utf8)
                 print(String(format: "match rate: %.1f%%", aligned.matchRate * 100))
-                print("Aligned SRT written: \(outPath)")
+                if outPath.lowercased().hasSuffix(".prompterproj") {
+                    // Project files keep word-level timings (SRT cannot).
+                    let project = PrompterProject(
+                        script: Script(segments: aligned.segments),
+                        style: StyleSettings(),
+                        audioPath: audioPath
+                    )
+                    try project.save(to: URL(fileURLWithPath: outPath))
+                    print("Aligned project written: \(outPath)")
+                } else {
+                    let srt = SRTParser.serialize(aligned.segments)
+                    try srt.write(toFile: outPath, atomically: true, encoding: .utf8)
+                    print("Aligned SRT written: \(outPath)")
+                }
             case .failure(let error):
                 fail("Alignment failed: \(error.localizedDescription)")
             case nil:
@@ -148,23 +159,37 @@ enum HeadlessRunner {
     // MARK: - --export
 
     private static func runExport(args: [String]) {
-        guard let srtPath = value(for: "--srt", in: args) else { fail("--export requires --srt <path>") }
+        let srtPath = value(for: "--srt", in: args)
+        let projectPath = value(for: "--project", in: args)
+        guard srtPath != nil || projectPath != nil else {
+            fail("--export requires --srt <path> or --project <path.prompterproj>")
+        }
         guard let outPath = value(for: "--out", in: args) else { fail("--export requires --out <path.mp4>") }
-        let audioPath = value(for: "--audio", in: args)
 
         do {
-            let segments = try loadSegments(srtPath: srtPath)
-            var script = Script(segments: segments)
-            script.normalize()
-
+            var script: Script
             var style = StyleSettings()
+            var audioPath = value(for: "--audio", in: args)
+            let sourcePath: String
+            if let projectPath {
+                // A project carries word-level timings (per-line scroll anchors).
+                let project = try PrompterProject.load(from: URL(fileURLWithPath: projectPath))
+                script = project.script
+                style = project.style
+                if audioPath == nil { audioPath = project.audioPath }
+                sourcePath = projectPath
+            } else {
+                script = Script(segments: try loadSegments(srtPath: srtPath!))
+                sourcePath = srtPath!
+            }
+            script.normalize()
             applyStyleFlags(&style, args: args)
 
             let audioURL = audioPath.map { URL(fileURLWithPath: $0) }
             let outputURL = URL(fileURLWithPath: outPath)
             let composition = PrompterComposition(script: script, style: style)
             let titleName = value(for: "--title", in: args)
-                ?? URL(fileURLWithPath: srtPath).deletingPathExtension().lastPathComponent
+                ?? URL(fileURLWithPath: sourcePath).deletingPathExtension().lastPathComponent
             let titleCard = TitleCardInfo(
                 projectName: titleName,
                 exportDate: Date(),
