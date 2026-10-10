@@ -1,5 +1,19 @@
 import Foundation
 
+/// Word-level timing from recognition/alignment, used to anchor the scroll
+/// per line instead of per cue. `location`/`length` are UTF-16 offsets into
+/// the segment's PLAIN (marker-free) text; `word` lets consumers validate
+/// the timing still matches the text after edits.
+struct WordTiming: Codable, Equatable, Hashable {
+    var word: String
+    var location: Int
+    var length: Int
+    var start: TimeInterval
+    var end: TimeInterval
+
+    var range: Range<Int> { location..<(location + length) }
+}
+
 /// One timed cue of the script.
 struct Segment: Identifiable, Codable, Equatable, Hashable {
     var id: UUID
@@ -7,6 +21,9 @@ struct Segment: Identifiable, Codable, Equatable, Hashable {
     /// Seconds from the start of the source audio / SRT timeline.
     var start: TimeInterval
     var end: TimeInterval
+    /// Present when the timings came from recognition/alignment; nil for
+    /// SRT imports and hand-edited cues. Optional so old project files decode.
+    var wordTimings: [WordTiming]?
 
     init(id: UUID = UUID(), text: String, start: TimeInterval, end: TimeInterval) {
         self.id = id
