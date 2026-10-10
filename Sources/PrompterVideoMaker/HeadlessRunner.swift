@@ -226,18 +226,27 @@ enum HeadlessRunner {
     // MARK: - --render-frame
 
     private static func runRenderFrame(args: [String]) {
-        guard let srtPath = value(for: "--srt", in: args) else { fail("--render-frame requires --srt <path>") }
+        let srtPath = value(for: "--srt", in: args)
+        let projectPath = value(for: "--project", in: args)
+        guard srtPath != nil || projectPath != nil else {
+            fail("--render-frame requires --srt <path> or --project <path.prompterproj>")
+        }
         guard let timeStr = value(for: "--time", in: args), let time = Double(timeStr) else {
             fail("--render-frame requires --time <seconds>")
         }
         guard let outPath = value(for: "--out", in: args) else { fail("--render-frame requires --out <path.png>") }
 
         do {
-            let segments = try loadSegments(srtPath: srtPath)
-            var script = Script(segments: segments)
-            script.normalize()
-
+            var script: Script
             var style = StyleSettings()
+            if let projectPath {
+                let project = try PrompterProject.load(from: URL(fileURLWithPath: projectPath))
+                script = project.script
+                style = project.style
+            } else {
+                script = Script(segments: try loadSegments(srtPath: srtPath!))
+            }
+            script.normalize()
             applyStyleFlags(&style, args: args)
 
             let composition = PrompterComposition(script: script, style: style)
