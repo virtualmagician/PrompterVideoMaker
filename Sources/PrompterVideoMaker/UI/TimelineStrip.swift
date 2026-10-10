@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A draggable cue timeline: a windowed strip of the script's timing
@@ -26,11 +27,41 @@ struct TimelineStrip: View {
         var windowStart: Double
         var pixelsPerSecond: CGFloat
         var lastTranslationWidth: CGFloat = 0
+        /// For edge drags: how far (in points) the cursor was from the true
+        /// edge when the drag began. The generous grab zones mean the cursor
+        /// can start well inside the block, so the edge follows
+        /// `cursor - grabOffset` instead of snapping to the cursor.
+        var grabOffset: CGFloat = 0
+    }
+
+    /// Which part of a block a point falls in.
+    private enum BlockZone: Equatable {
+        case startHandle
+        case middle
+        case endHandle
+    }
+
+    private struct HoverTarget: Equatable {
+        var id: UUID
+        var zone: BlockZone
     }
 
     @State private var activeDrag: ActiveDrag?
+    @State private var hoverTarget: HoverTarget?
 
-    private let edgeHitWidth: CGFloat = 7
+    /// Width of the grab zone at each edge of a block `w` points wide: 16 pt
+    /// for wide blocks, shrinking to 30% of the width (but never below 6 pt)
+    /// so narrow blocks keep a middle move zone. Used for hit-testing, the
+    /// cursor, and drawing (label padding / grip visibility).
+    private func handleZone(forBlockWidth w: CGFloat) -> CGFloat {
+        min(16, max(6, w * 0.3))
+    }
+
+    /// Grips are drawn only on blocks at least this wide.
+    private let gripMinBlockWidth: CGFloat = 22
+    private let gripWidth: CGFloat = 5
+    private let gripInset: CGFloat = 3
+    private let gripHeightFraction: CGFloat = 0.65
     private let rulerHeight: CGFloat = 14
     /// Taller when the audio waveform track is shown.
     private var stripHeight: CGFloat { appState.audioWaveform == nil ? 64 : 100 }
@@ -109,6 +140,8 @@ struct TimelineStrip: View {
 
             playheadLine(windowStart: windowStart, width: width, height: height)
                 .allowsHitTesting(false)
+
+            dragReadout(windowStart: windowStart, width: width)
         }
         .frame(width: width, height: height)
         .coordinateSpace(name: "timelineCanvas")
@@ -163,14 +196,28 @@ struct TimelineStrip: View {
     @ViewBuilder
     private func blockView(entry: Entry, windowStart: Double, width: CGFloat, blocksTop: CGFloat, blocksHeight: CGFloat) -> some View {
         let seg = entry.segment
-        let rawXStart = timeToX(seg.start, windowStart: windowStart, width: width)
-        let rawXEnd = timeToX(seg.end, windowStart: windowStart, width: width)
-        let xStart = max(rawXStart, 0)
-        let xEnd = min(rawXEnd, width)
-        let blockWidth = max(xEnd - xStart, 3)
+        let block = BlockGeometry(
+            rawXStart: timeToX(seg.start, windowStart: windowStart, width: width),
+            rawXEnd: timeToX(seg.end, windowStart: windowStart, width: width),
+            canvasWidth: width
+        )
+        let blockWidth = block.width
+        let zone = handleZone(forBlockWidth: blockWidth)
         let isSelected = entry.id == appState.selectedSegmentID
         let baseFill = entry.index.isMultiple(of: 2) ? Color.gray.opacity(0.24) : Color.gray.opacity(0.36)
         let fill = isSelected ? Color.accentColor.opacity(0.85) : baseFill
+
+        // A grip lights up when the cue is selected or that handle is being
+        // hovered / dragged.
+        let hoveredZone = hoverTarget?.id == entry.id ? hoverTarget?.zone : nil
+        let draggedKind = activeDrag?.id == entry.id ? activeDrag?.kind : nil
+        let startLit = isSelected || hoveredZone == .startHandle || draggedKind == .resizeStart
+        let endLit = isSelected || hoveredZone == .endHandle || draggedKind == .resizeEnd
+        let showGrips = blockWidth >= gripMinBlockWidth
+        // Keep the label clear of the grips (and the grab zones); drop it
+        // when there is no room left for a readable stub.
+        let labelRoom = blockWidth - 2 * zone
+        let showLabel = labelRoom >= 12
 
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 5)
@@ -180,55 +227,144 @@ struct TimelineStrip: View {
                         .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.25), lineWidth: isSelected ? 1.5 : 0.5)
                 )
 
-            // Brighter edge caps hint at the ~7pt resize-grab zone.
-            if blockWidth > 16 {
-                HStack {
-                    Capsule()
-                        .fill(Color.white.opacity(0.55))
-                        .frame(width: 3, height: blocksHeight * 0.55)
+            // Grip handles mark the resize-grab zones. A grip is drawn only
+            // at a cue's true edge, not where the window clips the block.
+            if showGrips {
+                HStack(spacing: 0) {
+                    gripView(lit: startLit, blocksHeight: blocksHeight)
+                        .opacity(block.hasStartEdge ? 1 : 0)
                     Spacer(minLength: 0)
-                    Capsule()
-                        .fill(Color.white.opacity(0.55))
-                        .frame(width: 3, height: blocksHeight * 0.55)
+                    gripView(lit: endLit, blocksHeight: blocksHeight)
+                        .opacity(block.hasEndEdge ? 1 : 0)
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, gripInset)
+                .allowsHitTesting(false)
             }
 
-            if blockWidth > 22 {
+            if showLabel {
                 Text(EmphasisMarkup.strip(seg.text))
                     .font(.caption)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .foregroundStyle(isSelected ? Color.white : Color.primary.opacity(0.85))
-                    .padding(.horizontal, 6)
+                    .padding(.horizontal, zone)
+                    .allowsHitTesting(false)
             }
         }
         .frame(width: blockWidth, height: blocksHeight)
-        .offset(x: xStart, y: blocksTop)
         .contentShape(Rectangle())
+        // Hover is attached before `.offset` so `.local` is the block's own
+        // space: x == 0 is the block's visible left edge.
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            updateHover(phase, entryID: entry.id, block: block)
+        }
+        .offset(x: block.xStart, y: blocksTop)
         .highPriorityGesture(
-            dragGesture(entry: entry, rawXStart: rawXStart, rawXEnd: rawXEnd, windowStart: windowStart, width: width)
+            dragGesture(entry: entry, block: block, windowStart: windowStart, width: width)
         )
     }
 
-    private func dragGesture(entry: Entry, rawXStart: CGFloat, rawXEnd: CGFloat, windowStart: Double, width: CGFloat) -> some Gesture {
+    private func gripView(lit: Bool, blocksHeight: CGFloat) -> some View {
+        Capsule()
+            .fill(Color.white.opacity(lit ? 0.9 : 0.55))
+            .frame(width: gripWidth, height: blocksHeight * gripHeightFraction)
+    }
+
+    /// A block's on-screen geometry within the canvas: the raw (possibly
+    /// off-window) edge positions, plus the clipped visible frame.
+    private struct BlockGeometry {
+        let rawXStart: CGFloat
+        let rawXEnd: CGFloat
+        let canvasWidth: CGFloat
+
+        var xStart: CGFloat { max(rawXStart, 0) }
+        var xEnd: CGFloat { min(rawXEnd, canvasWidth) }
+        /// Visible width (never thinner than 3 pt, so tiny cues stay grabbable).
+        var width: CGFloat { max(xEnd - xStart, 3) }
+        /// False when the window clips the cue's start / end off-screen; the
+        /// clipped side is then just the window boundary, not a resize handle.
+        var hasStartEdge: Bool { rawXStart >= 0 }
+        var hasEndEdge: Bool { rawXEnd <= canvasWidth }
+    }
+
+    /// Classifies a point (x in the block's visible-frame space) as one of
+    /// the two handle zones or the middle move zone. When a narrow block's
+    /// zones overlap, the nearer edge wins.
+    private func blockZone(atLocalX x: CGFloat, block: BlockGeometry) -> BlockZone {
+        let w = block.width
+        let hz = handleZone(forBlockWidth: w)
+        let inStart = block.hasStartEdge && x <= hz
+        let inEnd = block.hasEndEdge && x >= w - hz
+        switch (inStart, inEnd) {
+        case (true, true): return x <= w / 2 ? .startHandle : .endHandle
+        case (true, false): return .startHandle
+        case (false, true): return .endHandle
+        case (false, false): return .middle
+        }
+    }
+
+    private func dragKind(for zone: BlockZone) -> DragKind {
+        switch zone {
+        case .startHandle: return .resizeStart
+        case .endHandle: return .resizeEnd
+        case .middle: return .move
+        }
+    }
+
+    // MARK: - Cursor
+
+    private func cursor(for zone: BlockZone) -> NSCursor {
+        zone == .middle ? .openHand : .resizeLeftRight
+    }
+
+    private func dragCursor(for kind: DragKind) -> NSCursor {
+        kind == .move ? .closedHand : .resizeLeftRight
+    }
+
+    /// Uses `set()` only (never push/pop), so there is nothing to unbalance
+    /// if a hover-ended event is dropped or reordered.
+    private func updateHover(_ phase: HoverPhase, entryID: UUID, block: BlockGeometry) {
+        switch phase {
+        case .active(let point):
+            if let drag = activeDrag {
+                // Mid-drag: keep the drag cursor, leave hover state alone.
+                dragCursor(for: drag.kind).set()
+                return
+            }
+            let zone = blockZone(atLocalX: point.x, block: block)
+            let target = HoverTarget(id: entryID, zone: zone)
+            if hoverTarget != target { hoverTarget = target }
+            cursor(for: zone).set()
+        case .ended:
+            if hoverTarget?.id == entryID { hoverTarget = nil }
+            if activeDrag == nil { NSCursor.arrow.set() }
+        }
+    }
+
+    // MARK: - Drag
+
+    private func dragGesture(entry: Entry, block: BlockGeometry, windowStart: Double, width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("timelineCanvas"))
             .onChanged { value in
                 if activeDrag == nil || activeDrag?.id != entry.id {
                     let pxPerSec = pixelsPerSecond(width: width)
-                    let distStart = abs(value.startLocation.x - rawXStart)
-                    let distEnd = abs(value.startLocation.x - rawXEnd)
-                    let kind: DragKind
-                    if distStart <= edgeHitWidth && distStart <= distEnd {
-                        kind = .resizeStart
-                    } else if distEnd <= edgeHitWidth {
-                        kind = .resizeEnd
-                    } else {
-                        kind = .move
+                    let kind = dragKind(for: blockZone(atLocalX: value.startLocation.x - block.xStart, block: block))
+                    var grabOffset: CGFloat = 0
+                    switch kind {
+                    case .resizeStart: grabOffset = value.startLocation.x - block.rawXStart
+                    case .resizeEnd: grabOffset = value.startLocation.x - block.rawXEnd
+                    case .move: break
                     }
-                    activeDrag = ActiveDrag(id: entry.id, kind: kind, windowStart: windowStart, pixelsPerSecond: pxPerSec)
+                    activeDrag = ActiveDrag(
+                        id: entry.id,
+                        kind: kind,
+                        windowStart: windowStart,
+                        pixelsPerSecond: pxPerSec,
+                        grabOffset: grabOffset
+                    )
                 }
                 guard var drag = activeDrag, drag.id == entry.id else { return }
+                dragCursor(for: drag.kind).set()
                 switch drag.kind {
                 case .move:
                     let deltaPixels = value.translation.width - drag.lastTranslationWidth
@@ -238,10 +374,10 @@ struct TimelineStrip: View {
                     drag.lastTranslationWidth = value.translation.width
                     activeDrag = drag
                 case .resizeStart:
-                    let t = drag.windowStart + Double(value.location.x / drag.pixelsPerSecond)
+                    let t = drag.windowStart + Double((value.location.x - drag.grabOffset) / drag.pixelsPerSecond)
                     appState.setStart(entry.id, to: t)
                 case .resizeEnd:
-                    let t = drag.windowStart + Double(value.location.x / drag.pixelsPerSecond)
+                    let t = drag.windowStart + Double((value.location.x - drag.grabOffset) / drag.pixelsPerSecond)
                     appState.setEnd(entry.id, to: t)
                 }
             }
@@ -251,7 +387,64 @@ struct TimelineStrip: View {
                     appState.selectSegment(entry.id)
                 }
                 activeDrag = nil
+                hoverTarget = nil
+                NSCursor.arrow.set()
             }
+    }
+
+    // MARK: - Drag readout
+
+    /// The value being edited, formatted m:ss.t, and the script time the
+    /// readout is anchored to.
+    private func dragReadoutInfo() -> (text: String, anchorTime: Double)? {
+        guard let drag = activeDrag,
+              let seg = appState.project.script.segments.first(where: { $0.id == drag.id })
+        else { return nil }
+        switch drag.kind {
+        case .resizeStart:
+            return (formatTime(seg.start), seg.start)
+        case .resizeEnd:
+            return (formatTime(seg.end), seg.end)
+        case .move:
+            return ("\(formatTime(seg.start)) \u{2192} \(formatTime(seg.end))", (seg.start + seg.end) / 2)
+        }
+    }
+
+    /// A small dark capsule in the band just above the blocks, centered on
+    /// the edited edge (or the cue, for a move) and clamped to the canvas.
+    @ViewBuilder
+    private func dragReadout(windowStart: Double, width: CGFloat) -> some View {
+        if let info = dragReadoutInfo() {
+            ClampedCenterLayout(centerX: timeToX(info.anchorTime, windowStart: windowStart, width: width)) {
+                Text(info.text)
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(Color.white)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 7)
+                    .frame(height: rulerHeight)
+                    .background(Capsule().fill(Color.black.opacity(0.8)))
+            }
+            .frame(width: width, height: rulerHeight)
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// Places its single subview at its ideal size, horizontally centered on
+    /// `centerX` but clamped to stay fully inside the container.
+    private struct ClampedCenterLayout: Layout {
+        var centerX: CGFloat
+
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            proposal.replacingUnspecifiedDimensions(by: subviews.first?.sizeThatFits(.unspecified) ?? .zero)
+        }
+
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            guard let sub = subviews.first else { return }
+            let size = sub.sizeThatFits(.unspecified)
+            let x = min(max(centerX - size.width / 2, 0), max(bounds.width - size.width, 0))
+            sub.place(at: CGPoint(x: bounds.minX + x, y: bounds.minY), anchor: .topLeading, proposal: .unspecified)
+        }
     }
 
     // MARK: - Audio waveform track
