@@ -137,7 +137,7 @@ enum HeadlessRunner {
                     let project = PrompterProject(
                         script: Script(segments: aligned.segments),
                         style: StyleSettings(),
-                        audioPath: audioPath
+                        audioPath: URL(fileURLWithPath: audioPath).standardizedFileURL.path
                     )
                     try project.save(to: URL(fileURLWithPath: outPath))
                     print("Aligned project written: \(outPath)")

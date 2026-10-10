@@ -165,8 +165,12 @@ enum EmphasisMarkup {
         var i = 0
         while i < n {
             if effective[i].isEmpty {
-                out += ns.substring(with: NSRange(location: i, length: 1))
-                i += 1
+                // Copy the whole unmarked run at once: copying one UTF-16
+                // unit at a time would split surrogate pairs (emoji).
+                var k = i
+                while k < n, effective[k].isEmpty { k += 1 }
+                out += ns.substring(with: NSRange(location: i, length: k - i))
+                i = k
                 continue
             }
             // Maximal run of identical attribute sets.

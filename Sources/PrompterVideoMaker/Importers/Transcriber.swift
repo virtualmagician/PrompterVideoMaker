@@ -77,15 +77,25 @@ enum Transcriber {
     static func resolvedLocale(requested: Locale?) async -> Locale? {
         let candidates = [requested, Locale.current, Locale(identifier: "en_US")].compactMap { $0 }
         if #available(macOS 26.0, *) {
-            var supported: [Locale]?
+            let supported = Array(await SpeechTranscriber.supportedLocales)
+            func norm(_ id: String) -> String { id.replacingOccurrences(of: "_", with: "-").lowercased() }
             for candidate in candidates {
-                if let match = await SpeechTranscriber.supportedLocale(equivalentTo: candidate) {
+                // A bare language code ("de", as detected from script text)
+                // should pick the user's regional variant (de_CH in
+                // Switzerland) rather than whatever the system deems
+                // "equivalent", so the region-aware matcher goes first.
+                if candidate.region == nil,
+                   let match = SpeechLanguage.bestMatch(for: candidate, in: supported) {
                     return match
                 }
-                // A bare language code ("de") may have no direct equivalent;
-                // pick a supported regional variant of the same language.
-                if supported == nil { supported = Array(await SpeechTranscriber.supportedLocales) }
-                if let match = SpeechLanguage.bestMatch(for: candidate, in: supported ?? []) {
+                // Only trust the system's equivalent if it is actually in the
+                // supported list; otherwise an unsupported language would
+                // hard-fail instead of falling back to the next candidate.
+                if let match = await SpeechTranscriber.supportedLocale(equivalentTo: candidate),
+                   supported.contains(where: { norm($0.identifier) == norm(match.identifier) }) {
+                    return match
+                }
+                if let match = SpeechLanguage.bestMatch(for: candidate, in: supported) {
                     return match
                 }
             }
@@ -116,6 +126,15 @@ enum Transcriber {
         )
 
         // Download the on-device model if it isn't installed yet.
+        // Reservations persist across launches (cap 5); evict old ones when
+        // full so a new language never fails for lack of a slot.
+        let reserved = await AssetInventory.reservedLocales
+        if !reserved.contains(where: { $0.identifier == locale.identifier }) {
+            var count = reserved.count
+            for old in reserved where count >= AssetInventory.maximumReservedLocales {
+                if await AssetInventory.release(reservedLocale: old) { count -= 1 }
+            }
+        }
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
             progress(0.02)
             try await request.downloadAndInstall()

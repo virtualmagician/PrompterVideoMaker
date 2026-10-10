@@ -106,10 +106,10 @@ enum SpeechLanguage {
            let match = sameLanguage.first(where: { $0.region?.identifier == region }) {
             return match
         }
-        // The system region only counts when the system language is this one
-        // (a de_CH user reading German gets de_CH, an en_US user gets de_DE).
-        if Locale.current.language.languageCode?.identifier == lang,
-           let systemRegion = Locale.current.region?.identifier,
+        // Prefer the system region's variant whenever one exists: a user in
+        // Switzerland (even with an English system language) reading a
+        // German script should get de_CH, not an arbitrary German variant.
+        if let systemRegion = Locale.current.region?.identifier,
            let match = sameLanguage.first(where: { $0.region?.identifier == systemRegion }) {
             return match
         }

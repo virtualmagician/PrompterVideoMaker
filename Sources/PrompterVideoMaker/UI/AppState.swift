@@ -355,6 +355,15 @@ final class AppState: ObservableObject {
         let d = newStart - seg.start
         project.script.segments[i].start += d
         project.script.segments[i].end += d
+        // Word timings ride along with the cue, like offsetAll does.
+        if let timings = project.script.segments[i].wordTimings {
+            project.script.segments[i].wordTimings = timings.map { t in
+                var t = t
+                t.start = max(0, t.start + d)
+                t.end = max(0, t.end + d)
+                return t
+            }
+        }
         reanchorSpacers(around: i)
     }
 
