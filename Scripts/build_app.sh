@@ -17,7 +17,12 @@ if [[ -d /Applications/Xcode.app ]]; then
     export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 if swift build -c release --arch arm64 --arch x86_64 --scratch-path "$SCRATCH" 2>/dev/null; then
-    BINDIR="$SCRATCH/apple/Products/Release"
+    # Product location differs by Xcode version (apple/… before Xcode 27, out/… after).
+    if [[ -f "$SCRATCH/out/Products/Release/PrompterVideoMaker" ]]; then
+        BINDIR="$SCRATCH/out/Products/Release"
+    else
+        BINDIR="$SCRATCH/apple/Products/Release"
+    fi
     echo "    universal binary (arm64 + x86_64)"
 else
     echo "    universal build unavailable, building arm64 only"
