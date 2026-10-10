@@ -20,6 +20,33 @@ enum Aligner {
     private struct Token {
         let normalized: String
         let segmentIndex: Int
+        /// The token as written in the segment's PLAIN (marker-free) text,
+        /// with its UTF-16 range there; used for per-word timings.
+        let plainWord: String
+        let location: Int
+        let length: Int
+    }
+
+    /// Whitespace-delimited tokens of `plain` with their UTF-16 ranges.
+    private static func plainTokens(_ plain: String) -> [(word: String, location: Int, length: Int)] {
+        var out: [(word: String, location: Int, length: Int)] = []
+        var offset = 0
+        var current = ""
+        var currentStart = 0
+        for ch in plain {
+            if ch.isWhitespace {
+                if !current.isEmpty {
+                    out.append((current, currentStart, offset - currentStart))
+                    current = ""
+                }
+            } else {
+                if current.isEmpty { currentStart = offset }
+                current.append(ch)
+            }
+            offset += ch.utf16.count
+        }
+        if !current.isEmpty { out.append((current, currentStart, offset - currentStart)) }
+        return out
     }
 
     private static func normalize(_ word: some StringProtocol) -> String {
@@ -63,12 +90,19 @@ enum Aligner {
     /// Needleman–Wunsch global alignment of script tokens vs recognized
     /// tokens, then segment timings from the matched words.
     static func align(script: Script, words: [Transcriber.TimedWord]) -> Result {
-        // Script tokens tagged with their segment.
+        // Script tokens tagged with their segment. Tokenized on the PLAIN
+        // text (emphasis markers stripped) so word ranges line up with what
+        // RibbonLayout lays out.
         var tokens: [Token] = []
         for (si, seg) in script.segments.enumerated() {
-            for w in seg.text.split(whereSeparator: { $0.isWhitespace }) {
-                let n = normalize(w)
-                if !n.isEmpty { tokens.append(Token(normalized: n, segmentIndex: si)) }
+            for w in plainTokens(EmphasisMarkup.strip(seg.text)) {
+                let n = normalize(w.word)
+                if !n.isEmpty {
+                    tokens.append(Token(
+                        normalized: n, segmentIndex: si,
+                        plainWord: w.word, location: w.location, length: w.length
+                    ))
+                }
             }
         }
         let rec: [(norm: String, start: Double, end: Double)] = words.compactMap {
@@ -122,12 +156,26 @@ enum Aligner {
         matched.reverse()
 
         // Per-segment: first/last matched recognized word give start/end.
+        // Every matched pair also becomes a WordTiming (plain-text range +
+        // recognized time) for per-line scroll anchoring.
         var starts = [Double?](repeating: nil, count: script.segments.count)
         var ends = [Double?](repeating: nil, count: script.segments.count)
+        var timings = [[WordTiming]](repeating: [], count: script.segments.count)
         for (ti, ri) in matched {
             let si = tokens[ti].segmentIndex
             if starts[si] == nil { starts[si] = rec[ri].start }
             ends[si] = rec[ri].end
+            // `matched` is in script order, so locations already ascend; drop
+            // any timing that would run backwards in time (noisy ASR) so the
+            // list stays monotone.
+            if let prev = timings[si].last, rec[ri].start < prev.start { continue }
+            timings[si].append(WordTiming(
+                word: tokens[ti].plainWord,
+                location: tokens[ti].location,
+                length: tokens[ti].length,
+                start: rec[ri].start,
+                end: rec[ri].end
+            ))
         }
 
         // Interpolate any unmatched segments between their timed neighbors.
@@ -170,6 +218,8 @@ enum Aligner {
         for si in 0..<total {
             segments[si].start = starts[si] ?? 0
             segments[si].end = max(ends[si] ?? segments[si].start, segments[si].start)
+            // Interpolated (unmatched) segments have no real word timings.
+            segments[si].wordTimings = timings[si].isEmpty ? nil : timings[si]
         }
 
         var result = Script(segments: segments)

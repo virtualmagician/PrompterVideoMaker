@@ -31,16 +31,101 @@ final class PrompterComposition {
                 script.firstStart - style.leadIn,
                 firstExtent.firstLineCenterY - markerY - (canvasHeight - markerY)
             ))
-            // Each segment's first line sits exactly on the marker at its start time.
-            for (i, segment) in script.segments.enumerated() {
-                points.append((segment.start, extents[i].firstLineCenterY - markerY))
-            }
+            // Each segment's first line sits exactly on the marker at its
+            // start time; with valid word timings every later line also gets
+            // an anchor at the time its first word is spoken.
+            points.append(contentsOf: Self.scrollAnchors(script: script, layout: layout, markerY: markerY))
             // The last line reaches the marker at the last cue's end; holds during lead-out.
             points.append((script.lastEnd, lastExtent.lastLineCenterY - markerY))
         } else {
             points.append((0, 0))
         }
         self.scrollCurve = ScrollCurve(points: points)
+    }
+
+    // MARK: - Scroll anchors
+
+    /// Anchors closer than this (seconds) to the previous kept anchor are
+    /// dropped: noisy word times would otherwise create near-vertical spline
+    /// sections.
+    static let minAnchorGap: Double = 0.25
+
+    private struct Anchor {
+        var time: Double
+        var offset: Double
+        /// A segment's first-line anchor (cue start); never dropped.
+        var isSegmentFirst: Bool
+    }
+
+    /// Returns `timings` sorted by location when they still describe `plain`
+    /// exactly (every range in bounds and `plain[range] == word`); nil when
+    /// absent or when the text was edited since they were captured.
+    private static func validWordTimings(_ timings: [WordTiming]?, plain: String) -> [WordTiming]? {
+        guard let timings, !timings.isEmpty else { return nil }
+        let ns = plain as NSString
+        for t in timings {
+            guard t.location >= 0, t.length > 0, t.length <= ns.length - t.location,
+                  t.start.isFinite, t.end.isFinite else { return nil }
+            guard ns.substring(with: NSRange(location: t.location, length: t.length)) == t.word else { return nil }
+        }
+        return timings.sorted { $0.location < $1.location }
+    }
+
+    /// Scroll control points (script time, ribbon offset) for all segments.
+    ///
+    /// Rule: every segment contributes (segment.start, firstLineCenterY -
+    /// markerY). If its word timings are valid for the current text, every
+    /// later layout line L (non-empty range) also contributes (start of the
+    /// first word timing intersecting L.range, clamped to
+    /// [segment.start, segment.end]; L.centerY - markerY); lines no word
+    /// touches are skipped. Finally any later-line anchor less than
+    /// `minAnchorGap` after the previous kept anchor is dropped; a
+    /// segment's first-line anchor is never dropped (conflicting later-line
+    /// anchors before it are removed instead).
+    static func scrollAnchors(script: Script, layout: RibbonLayout, markerY: CGFloat) -> [(time: Double, offset: Double)] {
+        let segmentCount = script.segments.count
+        var linesBySegment = [[RibbonLayout.Line]](repeating: [], count: segmentCount)
+        for line in layout.lines where line.segmentIndex >= 0 && line.segmentIndex < segmentCount {
+            linesBySegment[line.segmentIndex].append(line)
+        }
+
+        var kept: [Anchor] = []
+        func add(_ a: Anchor) {
+            if a.isSegmentFirst {
+                // Mandatory: evict later-line anchors that crowd (or follow) it.
+                while let last = kept.last, !last.isSegmentFirst, a.time - last.time < minAnchorGap {
+                    kept.removeLast()
+                }
+            } else if let last = kept.last, a.time - last.time < minAnchorGap {
+                return
+            }
+            kept.append(a)
+        }
+
+        for (i, segment) in script.segments.enumerated() {
+            add(Anchor(
+                time: segment.start,
+                offset: layout.segmentExtents[i].firstLineCenterY - markerY,
+                isSegmentFirst: true
+            ))
+
+            guard i < layout.segmentPlainTexts.count,
+                  let timings = validWordTimings(segment.wordTimings, plain: layout.segmentPlainTexts[i])
+            else { continue }
+
+            var p = 0
+            for line in linesBySegment[i].dropFirst() where line.range.length > 0 {
+                let lineStart = line.range.location
+                let lineEnd = lineStart + line.range.length
+                // First timing that ends after this line begins; it
+                // intersects the line only if it also begins before it ends.
+                while p < timings.count, timings[p].location + timings[p].length <= lineStart { p += 1 }
+                guard p < timings.count, timings[p].location < lineEnd else { continue }
+                let time = min(max(timings[p].start, segment.start), max(segment.end, segment.start))
+                add(Anchor(time: time, offset: line.centerY - markerY, isSegmentFirst: false))
+            }
+        }
+        return kept.map { ($0.time, $0.offset) }
     }
 
     /// Renders a full frame at `scale` (1.0 -> 1920x1080; 0.5 -> 960x540).

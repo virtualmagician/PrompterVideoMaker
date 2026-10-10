@@ -65,6 +65,15 @@ struct Script: Codable, Equatable {
         for i in segments.indices {
             segments[i].start = max(0, segments[i].start + delta)
             segments[i].end = max(0, segments[i].end + delta)
+            // Word timings live on the same timeline as the cue; shift with it.
+            if let timings = segments[i].wordTimings {
+                segments[i].wordTimings = timings.map { t in
+                    var t = t
+                    t.start = max(0, t.start + delta)
+                    t.end = max(0, t.end + delta)
+                    return t
+                }
+            }
         }
         normalize()
     }
@@ -82,15 +91,23 @@ struct Script: Codable, Equatable {
         guard !a.isEmpty, !b.isEmpty else { return }
         let frac = Double(a.count) / Double(text.count)
         let mid = seg.start + seg.duration * frac
-        segments[i] = Segment(id: seg.id, text: a, start: seg.start, end: mid)
-        segments.insert(Segment(text: b, start: mid, end: seg.end), at: i + 1)
+        // Plain-text ranges no longer line up after a split: drop word timings.
+        var first = Segment(id: seg.id, text: a, start: seg.start, end: mid)
+        first.wordTimings = nil
+        var second = Segment(text: b, start: mid, end: seg.end)
+        second.wordTimings = nil
+        segments[i] = first
+        segments.insert(second, at: i + 1)
     }
 
     /// Merge the segment with the one following it.
     mutating func mergeWithNext(segmentID: UUID) {
         guard let i = segments.firstIndex(where: { $0.id == segmentID }), i + 1 < segments.count else { return }
         let a = segments[i], b = segments[i + 1]
-        segments[i] = Segment(id: a.id, text: a.text + " " + b.text, start: a.start, end: max(a.end, b.end))
+        // Plain-text ranges no longer line up after a merge: drop word timings.
+        var merged = Segment(id: a.id, text: a.text + " " + b.text, start: a.start, end: max(a.end, b.end))
+        merged.wordTimings = nil
+        segments[i] = merged
         segments.remove(at: i + 1)
     }
 }
