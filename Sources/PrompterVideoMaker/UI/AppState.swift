@@ -51,9 +51,15 @@ struct WordSelection: Equatable {
     var plainText: String
 }
 
+extension UTType {
+    /// Declared in Info.plist (UTExportedTypeDeclarations).
+    static var prompterProject: UTType {
+        UTType("com.marcotempest.prompterproj") ?? UTType(filenameExtension: "prompterproj") ?? .json
+    }
+}
+
 private extension UTType {
     static var srtSubtitle: UTType { UTType(filenameExtension: "srt") ?? .plainText }
-    static var prompterProject: UTType { UTType(filenameExtension: "prompterproj") ?? .json }
 }
 
 /// Central app state: the loaded project, playback clock, and the async
@@ -85,6 +91,31 @@ final class AppState: ObservableObject {
     /// Where the currently loaded project was opened from / last saved to.
     var projectFileURL: URL?
 
+    /// The project as of the last New / Open / Save. `nil` only before init completes.
+    @Published private(set) var savedSnapshot: PrompterProject?
+    var isDirty: Bool { project != savedSnapshot }
+    var documentTitle: String { projectFileURL?.deletingPathExtension().lastPathComponent ?? "Untitled" }
+
+    enum DiscardDecision { case save, discard, cancel }
+
+    /// Asked when unsaved changes would be lost. Injectable for tests.
+    var confirmDiscard: @MainActor (String) -> DiscardDecision = { title in
+        let alert = NSAlert()
+        alert.messageText = "Do you want to save the changes made to \(title)?"
+        alert.informativeText = "Your changes will be lost if you don't save them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return .save
+        case .alertSecondButtonReturn: return .discard
+        default: return .cancel
+        }
+    }
+
+    /// Presents the Save As panel; returns the chosen URL or nil if cancelled. Injectable for tests.
+    var saveAsPresenter: () -> URL? = { nil }
+
     private var playStartVideoTime: Double = 0
     private var playStartDate: Date = Date()
 
@@ -110,6 +141,8 @@ final class AppState: ObservableObject {
     }
 
     init() {
+        savedSnapshot = project
+        saveAsPresenter = { [weak self] in self?.runSavePanel() }
         $project
             .dropFirst()
             .debounce(for: .seconds(0.25), scheduler: DispatchQueue.main)
@@ -566,8 +599,10 @@ final class AppState: ObservableObject {
         }
         switch url.pathExtension.lowercased() {
         case "srt":
+            guard confirmReadyToReplaceDocument() else { return }
             pendingSRTImport = PendingSRTImport(url: url)
         case "wav", "mp3", "m4a", "aif", "aiff":
+            guard confirmReadyToReplaceDocument() else { return }
             startTranscription(audioURL: url)
         case "prompterproj":
             openProject(url: url)
@@ -591,6 +626,7 @@ final class AppState: ObservableObject {
             script.normalize()
             project.script = script
             project.globalOffset = nil
+            projectFileURL = nil
             selectedSegmentID = script.segments.first?.id
             pause()
             playheadVideoTime = 0
@@ -600,17 +636,21 @@ final class AppState: ObservableObject {
         pendingSRTImport = nil
     }
 
-    /// Resets to a fresh, empty project (keeping the user's saved default
-    /// style), confirming first when a script is loaded.
-    func newProject() {
-        if !project.script.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = "Start a New Project?"
-            alert.informativeText = "The current script and settings will be replaced. Save the project first if you want to keep them."
-            alert.addButton(withTitle: "New Project")
-            alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+    /// True when it is safe to replace the current document: clean, or the
+    /// user chose Save (and it succeeded) or Don't Save.
+    func confirmReadyToReplaceDocument() -> Bool {
+        guard isDirty else { return true }
+        switch confirmDiscard(documentTitle) {
+        case .save: return saveProject()
+        case .discard: return true
+        case .cancel: return false
         }
+    }
+
+    /// Resets to a fresh, blank, untitled project (keeping the user's saved
+    /// default style), asking about unsaved changes first.
+    func newProject() {
+        guard confirmReadyToReplaceDocument() else { return }
         pause()
         cancelRecording()
         cancelTranscription()
@@ -618,6 +658,7 @@ final class AppState: ObservableObject {
         recordPaneVisible = false
         project = PrompterProject(style: AppState.loadDefaultStyle())
         projectFileURL = nil
+        savedSnapshot = project
         UserDefaults.standard.removeObject(forKey: Self.lastProjectKey)
         selectedSegmentID = nil
         playheadVideoTime = 0
@@ -625,10 +666,12 @@ final class AppState: ObservableObject {
     }
 
     func openProject(url: URL) {
+        guard confirmReadyToReplaceDocument() else { return }
         do {
             let proj = try PrompterProject.load(from: url)
             project = proj
             rememberProjectURL(url)
+            savedSnapshot = proj
             selectedSegmentID = proj.script.segments.first?.id
             playheadVideoTime = 0
             isPlaying = false
@@ -676,6 +719,7 @@ final class AppState: ObservableObject {
                 project.script = script
                 project.audioPath = audioURL.path
                 project.globalOffset = nil
+                projectFileURL = nil
                 selectedSegmentID = script.segments.first?.id
                 pause()
                 playheadVideoTime = 0
@@ -754,10 +798,13 @@ final class AppState: ObservableObject {
     /// Builds a script directly from pasted text (see `NewScriptSheet`),
     /// estimating timings the same way SRT-less scripts always have.
     func createScript(fromText text: String, granularity: ScriptGranularity) {
+        // Replacing the script discards the current document's unsaved work.
+        guard confirmReadyToReplaceDocument() else { return }
         let script = ScriptImporter.script(fromPastedText: text, granularity: granularity)
         project.script = script
         project.audioPath = nil
         project.globalOffset = nil
+        projectFileURL = nil
         selectedSegmentID = script.segments.first?.id
         pause()
         playheadVideoTime = 0
@@ -895,32 +942,47 @@ final class AppState: ObservableObject {
 
     // MARK: - Save project
 
-    func saveProject() {
-        if let url = projectFileURL {
-            do {
-                try project.save(to: url)
-                rememberProjectURL(url)
-            } catch {
-                errorMessage = "Could not save project: \(error.localizedDescription)"
-            }
-        } else {
-            presentSaveProjectPanel()
+    /// Writes the project to `url`, remembering it as the document and
+    /// marking it clean. Returns false (and sets errorMessage) on failure.
+    @discardableResult
+    func writeProject(to url: URL) -> Bool {
+        do {
+            try project.save(to: url)
+            rememberProjectURL(url)
+            savedSnapshot = project
+            return true
+        } catch {
+            errorMessage = "Could not save project: \(error.localizedDescription)"
+            return false
         }
     }
 
-    func presentSaveProjectPanel() {
+    /// Save: writes to the current file if it still exists, else asks for a name.
+    @discardableResult
+    func saveProject() -> Bool {
+        if let url = projectFileURL, FileManager.default.fileExists(atPath: url.path) {
+            return writeProject(to: url)
+        }
+        return presentSaveProjectPanel()
+    }
+
+    /// Save As…: always asks for a destination.
+    @discardableResult
+    func presentSaveProjectPanel() -> Bool {
+        guard var url = saveAsPresenter() else { return false }
+        if url.pathExtension.lowercased() != "prompterproj" {
+            url.appendPathExtension("prompterproj")
+        }
+        return writeProject(to: url)
+    }
+
+    private func runSavePanel() -> URL? {
         let panel = NSSavePanel()
         panel.title = "Save Project"
         panel.allowedContentTypes = [.prompterProject]
-        panel.nameFieldStringValue = (projectFileURL?.deletingPathExtension().lastPathComponent ?? "Untitled") + ".prompterproj"
-        if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try project.save(to: url)
-                rememberProjectURL(url)
-            } catch {
-                errorMessage = "Could not save project: \(error.localizedDescription)"
-            }
-        }
+        if let dir = projectFileURL?.deletingLastPathComponent() { panel.directoryURL = dir }
+        panel.nameFieldStringValue = documentTitle
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     // MARK: - Export

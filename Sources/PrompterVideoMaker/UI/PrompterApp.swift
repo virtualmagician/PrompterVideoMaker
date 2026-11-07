@@ -7,6 +7,11 @@ import os.log
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var handler: (([URL]) -> Void)?
     private var pendingURLs: [URL] = []
+    var terminationCheck: (() -> Bool)?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        (terminationCheck?() ?? true) ? .terminateNow : .terminateCancel
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         Logger(subsystem: "com.marcotempest.PrompterVideoMaker", category: "open")
@@ -46,6 +51,7 @@ struct PrompterApp: App {
                 }
                 .onAppear {
                     let state = appState
+                    appDelegate.terminationCheck = { MainActor.assumeIsolated { state.confirmReadyToReplaceDocument() } }
                     appDelegate.attach { urls in
                         Task { @MainActor in
                             urls.forEach { state.importURL($0) }

@@ -49,10 +49,28 @@
 		<dict>
 			<key>CFBundleTypeName</key>
 			<string>Prompter Project</string>
+			<key>LSItemContentTypes</key>
+			<array><string>com.marcotempest.prompterproj</string></array>
 			<key>CFBundleTypeExtensions</key>
 			<array><string>prompterproj</string></array>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.marcotempest.prompterproj</string>
+			<key>UTTypeDescription</key>
+			<string>Prompter Project</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.json</string><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>prompterproj</string></array>
+			</dict>
 		</dict>
 	</array>
 </dict>

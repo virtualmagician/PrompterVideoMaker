@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 /// Root layout: SegmentListView | PreviewView+TransportBar | InspectorView,
@@ -26,6 +27,9 @@ struct ContentView: View {
             InspectorView()
                 .frame(minWidth: 300, idealWidth: 320, maxWidth: 340)
         }
+        .navigationTitle(appState.documentTitle)
+        .background(WindowDocumentState(isEdited: appState.isDirty, representedURL: appState.projectFileURL)
+            .frame(width: 0, height: 0))
         .toolbar {
             // Labeled buttons ordered by workflow: write/import a script,
             // record its timing, save, export the video.
@@ -231,5 +235,21 @@ private struct ExportProgressSheet: View {
         }
         .padding(28)
         .frame(width: 320)
+    }
+}
+
+/// Drives the window's edited dot and proxy icon.
+struct WindowDocumentState: NSViewRepresentable {
+    let isEdited: Bool
+    let representedURL: URL?
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = nsView.window else { return }
+            window.isDocumentEdited = isEdited
+            window.representedURL = representedURL
+        }
     }
 }
